@@ -17,6 +17,7 @@ struct OverlayConfig {
     float color_invis[4] = {1.0f, 0.0f, 0.0f, 0.65f};
     bool show_invisible = true;
     std::string maps_dir = "./maps";
+    bool hyprland_support = false;
 
     // V2 parameters
     std::string vpk_path = "auto";

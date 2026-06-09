@@ -32,6 +32,7 @@ OverlayConfig load_config(const std::string& filename) {
                 {"color_invisible", {255, 0, 0, 166}},
                 {"show_invisible", true},
                 {"maps_dir", "./maps"},
+                {"hyprland_support", false},
                 {"vpk_path", "auto"},
                 {"chams_style_visible", "metallic"},
                 {"chams_style_hidden", "flat"},
@@ -67,6 +68,7 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("extrapolate")) cfg.extrapolate = j["extrapolate"].get<bool>();
         if (j.contains("maps_dir")) cfg.maps_dir = j["maps_dir"].get<std::string>();
         if (j.contains("show_invisible")) cfg.show_invisible = j["show_invisible"].get<bool>();
+        if (j.contains("hyprland_support")) cfg.hyprland_support = j["hyprland_support"].get<bool>();
 
         if (j.contains("color_visible") && j["color_visible"].is_array() && j["color_visible"].size() == 4) {
             for (int i = 0; i < 4; ++i) {
@@ -141,6 +143,7 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         }},
         {"show_invisible", cfg.show_invisible},
         {"maps_dir", cfg.maps_dir},
+        {"hyprland_support", cfg.hyprland_support},
         {"vpk_path", cfg.vpk_path},
         {"chams_style_visible", cfg.style_vis},
         {"chams_style_hidden", cfg.style_invis},

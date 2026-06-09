@@ -4,6 +4,7 @@
 #include <X11/extensions/shape.h>
 #include <iostream>
 #include <cstring>
+#include <cstdlib>
 #include <array>
 #include <chrono>
 
@@ -103,8 +104,8 @@ static void draw_string(const std::string& str, float x, float y, float r, float
     glEnable(GL_DEPTH_TEST);
 }
 
-OverlayClient::OverlayClient(int w, int h, int x, int y) : width(w), height(h) {
-    init_window(x, y);
+OverlayClient::OverlayClient(int w, int h, int x, int y, bool hyprland_support) : width(w), height(h), hyprland_support(hyprland_support) {
+    init_window(x, y, hyprland_support);
     init_opengl();
     set_click_through(true);
 }
@@ -140,7 +141,7 @@ void OverlayClient::set_click_through(bool enabled) {
     XFlush(display);
 }
 
-void OverlayClient::init_window(int x, int y) {
+void OverlayClient::init_window(int x, int y, bool hyprland_support) {
     glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
 
     if (!glfwInit()) {
@@ -167,7 +168,10 @@ void OverlayClient::init_window(int x, int y) {
     // Apply X11 override_redirect to bypass window managers
     Display* display = glfwGetX11Display();
     Window x_win = glfwGetX11Window(window);
-    if (display && x_win) {
+    if (hyprland_support) {
+        std::cout << "OVERLAY_CLIENT: Hyprland compatibility mode enabled; skipping override_redirect "
+                     "(relying on input region + windowrules for click-through)." << std::endl;
+    } else if (display && x_win) {
         glfwHideWindow(window);
         XSetWindowAttributes attrs;
         attrs.override_redirect = True;

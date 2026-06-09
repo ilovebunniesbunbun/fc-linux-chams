@@ -280,6 +280,9 @@ void MenuClient::render_ui() {
             ImGui::Checkbox("Show FPS Counter", &cfg.show_fps);
             ImGui::Checkbox("Extrapolate View Matrix", &cfg.extrapolate);
             ImGui::SetItemTooltip("Performs linear extrapolation of game view projection matrix to smooth chams tracking.");
+            
+            ImGui::Checkbox("Hyprland Compatibility Mode", &cfg.hyprland_support);
+            ImGui::SetItemTooltip("Bypasses X11 override_redirect. Useful for wlroots-based WMs like Hyprland.\nNote: Requires restarting the overlay application to take effect.");
 
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Geometry & Scaling");

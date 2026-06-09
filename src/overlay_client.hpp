@@ -6,7 +6,7 @@
 
 class OverlayClient {
 public:
-    OverlayClient(int width, int height, int x, int y);
+    OverlayClient(int width, int height, int x, int y, bool hyprland_support = false);
     ~OverlayClient();
 
     bool should_close();
@@ -23,9 +23,10 @@ public:
 private:
     int width;
     int height;
+    bool hyprland_support = false;
     GLFWwindow* window = nullptr;
 
-    void init_window(int x, int y);
+    void init_window(int x, int y, bool hyprland_support);
     void init_opengl();
     void cleanup();
 };

@@ -420,7 +420,7 @@ int main() {
     std::cout << "FC2 CHAMS V2: Window geometry: " << width << "x" << height 
               << " at (" << x << ", " << y << ")" << std::endl;
 
-    OverlayClient overlay(width, height, x, y);
+    OverlayClient overlay(width, height, x, y, cfg.hyprland_support);
 
     // Initialize dynamic OpenGL function pointers
     if (!load_gl_functions()) {
