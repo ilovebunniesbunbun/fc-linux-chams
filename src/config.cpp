@@ -39,6 +39,9 @@ OverlayConfig load_config(const std::string& filename) {
                 {"use_depth_prepass", true},
                 {"use_bvh_fallback", true},
                 {"glow_enabled", false},
+                {"glow_health_based", false},
+                {"glow_health_start", {0, 255, 0, 204}},
+                {"glow_health_end", {255, 0, 0, 204}},
                 {"glow_thickness", 1.5},
                 {"glow_intensity", 1.0},
                 {"glow_color", {255, 0, 255, 204}},
@@ -88,6 +91,7 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("use_bvh_fallback")) cfg.use_bvh_fallback = j["use_bvh_fallback"].get<bool>();
 
         if (j.contains("glow_enabled")) cfg.glow_enabled = j["glow_enabled"].get<bool>();
+        if (j.contains("glow_health_based")) cfg.glow_health_based = j["glow_health_based"].get<bool>();
         if (j.contains("glow_thickness")) cfg.glow_thickness = j["glow_thickness"].get<float>();
         if (j.contains("glow_intensity")) cfg.glow_intensity = j["glow_intensity"].get<float>();
         if (j.contains("glow_pulse")) cfg.glow_pulse = j["glow_pulse"].get<bool>();
@@ -96,6 +100,16 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("glow_color") && j["glow_color"].is_array() && j["glow_color"].size() == 4) {
             for (int i = 0; i < 4; ++i) {
                 cfg.glow_color[i] = j["glow_color"][i].get<float>() / 255.0f;
+            }
+        }
+        if (j.contains("glow_health_start") && j["glow_health_start"].is_array() && j["glow_health_start"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.glow_health_start[i] = j["glow_health_start"][i].get<float>() / 255.0f;
+            }
+        }
+        if (j.contains("glow_health_end") && j["glow_health_end"].is_array() && j["glow_health_end"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.glow_health_end[i] = j["glow_health_end"][i].get<float>() / 255.0f;
             }
         }
     } catch (...) {}
@@ -146,6 +160,7 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"use_depth_prepass", cfg.use_depth_prepass},
         {"use_bvh_fallback", cfg.use_bvh_fallback},
         {"glow_enabled", cfg.glow_enabled},
+        {"glow_health_based", cfg.glow_health_based},
         {"glow_thickness", cfg.glow_thickness},
         {"glow_intensity", cfg.glow_intensity},
         {"glow_pulse", cfg.glow_pulse},
@@ -155,6 +170,18 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
             static_cast<int>(cfg.glow_color[1] * 255.0f),
             static_cast<int>(cfg.glow_color[2] * 255.0f),
             static_cast<int>(cfg.glow_color[3] * 255.0f)
+        }},
+        {"glow_health_start", {
+            static_cast<int>(cfg.glow_health_start[0] * 255.0f),
+            static_cast<int>(cfg.glow_health_start[1] * 255.0f),
+            static_cast<int>(cfg.glow_health_start[2] * 255.0f),
+            static_cast<int>(cfg.glow_health_start[3] * 255.0f)
+        }},
+        {"glow_health_end", {
+            static_cast<int>(cfg.glow_health_end[0] * 255.0f),
+            static_cast<int>(cfg.glow_health_end[1] * 255.0f),
+            static_cast<int>(cfg.glow_health_end[2] * 255.0f),
+            static_cast<int>(cfg.glow_health_end[3] * 255.0f)
         }}
     };
 

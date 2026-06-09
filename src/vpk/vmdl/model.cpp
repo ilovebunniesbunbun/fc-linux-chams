@@ -2,10 +2,16 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <iostream>
 
 namespace AgentParser {
 
 static vpk::VPKDir s_VpkDir;
+static std::string s_CustomVpkPath = "";
+
+void SetCustomVpkPath(const std::string& path) {
+    s_CustomVpkPath = path;
+}
 
 static void RecalculateNormalsFromIndices(std::vector<MeshVertex>& Verts, const std::vector<std::uint32_t>& Idxs) {
     for (auto& V : Verts) { V.nx = 0; V.ny = 0; V.nz = 0; }
@@ -89,7 +95,7 @@ static std::string NormalizePath(std::string Path, const char* SrcExt, const cha
 }
 
 static bool ResolveGeometryFromRefs(vpk::VPKDir& Dir, source2::ModelData& Md) {
-    if (Md.has_geometry()) return true;
+    if (Md.has_geometry() && Md.mesh_resources.empty()) return true;
 
     for (const auto& Ref : Md.mesh_resources) {
         const std::string MeshPath = NormalizePath(Ref, ".vmesh", ".vmesh_c");
@@ -117,7 +123,7 @@ static bool ResolveGeometryFromRefs(vpk::VPKDir& Dir, source2::ModelData& Md) {
         Md.geometry_source = 3;
         return true;
     }
-    return false;
+    return Md.has_geometry();
 }
 
 static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out) {
@@ -260,6 +266,9 @@ static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out) {
 
 bool EnsureVpkOpen() {
     if (s_VpkDir.is_open()) return true;
+    if (!s_CustomVpkPath.empty() && s_CustomVpkPath != "auto") {
+        if (s_VpkDir.open(s_CustomVpkPath)) return true;
+    }
     for (const auto& Path : vpk::cs2_default_vpk_paths()) {
         if (s_VpkDir.open(Path)) break;
     }

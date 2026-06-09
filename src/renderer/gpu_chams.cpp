@@ -708,7 +708,7 @@ void GpuChamsRenderer::render_glow_silhouette(unsigned int vao, unsigned int ibo
     render_mesh(vao, ibo, index_count, bones_palette, color, 2);
 }
 
-void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, float intensity) {
+void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, float intensity, unsigned int target_fbo) {
     int fbo_w = (width + 1) / 2;
     int fbo_h = (height + 1) / 2;
     if (fbo_w < 1) fbo_w = 1;
@@ -771,7 +771,7 @@ void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, flo
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // 6. Masked Composite: glow_tex_a + mask_tex -> screen (additive blend)
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
     glViewport(0, 0, width, height);
 
     glEnable(GL_BLEND);

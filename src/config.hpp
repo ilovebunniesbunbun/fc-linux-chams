@@ -28,7 +28,10 @@ struct OverlayConfig {
 
     // Glow shader options
     bool glow_enabled = false;
+    bool glow_health_based = false;
     float glow_color[4] = {1.0f, 0.0f, 1.0f, 0.8f};
+    float glow_health_start[4] = {0.0f, 1.0f, 0.0f, 0.8f};
+    float glow_health_end[4] = {1.0f, 0.0f, 0.0f, 0.8f};
     float glow_thickness = 1.5f;
     float glow_intensity = 1.0f;
     bool glow_pulse = false;

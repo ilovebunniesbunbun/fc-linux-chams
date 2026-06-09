@@ -32,7 +32,7 @@ public:
     void render_glow_silhouette(unsigned int vao, unsigned int ibo, size_t index_count,
                                  const std::vector<source2::Mat3x4>& bones_palette,
                                  const float* color);
-    void end_glow_pass(int width, int height, float thickness, float intensity);
+    void end_glow_pass(int width, int height, float thickness, float intensity, unsigned int target_fbo = 0);
 
     void begin_body_pass(const float* view_proj, const float* cam_pos);
     void end_body_pass();

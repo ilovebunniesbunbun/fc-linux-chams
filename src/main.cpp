@@ -746,8 +746,22 @@ int main() {
                 if (!rp.model) continue;
 
                 if (rp.is_visible || cfg.show_invisible) {
-                    chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                          rp.skinning_palette, cfg.glow_color);
+                    if (cfg.glow_health_based) {
+                        float hp_factor = static_cast<float>(packet.players[i].health) / 100.0f;
+                        if (hp_factor < 0.0f) hp_factor = 0.0f;
+                        if (hp_factor > 1.0f) hp_factor = 1.0f;
+
+                        float custom_color[4];
+                        for (int c = 0; c < 4; ++c) {
+                            custom_color[c] = cfg.glow_health_end[c] + hp_factor * (cfg.glow_health_start[c] - cfg.glow_health_end[c]);
+                        }
+
+                        chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                              rp.skinning_palette, custom_color);
+                    } else {
+                        chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                              rp.skinning_palette, cfg.glow_color);
+                    }
                 }
             }
 
