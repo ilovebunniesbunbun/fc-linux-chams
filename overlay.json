@@ -1,0 +1,47 @@
+{
+    "monitor_w": 2560,
+    "monitor_h": 1440,
+    "game_w": 1280,
+    "game_h": 960,
+    "scaling": "stretched",
+    "game_x": 0,
+    "game_y": 0,
+    "fps": 0,
+    "show_fps": true,
+    "extrapolate": false,
+    "color_visible": [
+        0,
+        255,
+        0,
+        166
+    ],
+    "color_invisible": [
+        255,
+        0,
+        0,
+        166
+    ],
+    "show_invisible": true,
+    "maps_dir": "./maps",
+    "vpk_path": "auto",
+    "chams_style_visible": "metallic",
+    "chams_style_hidden": "flat",
+    "use_depth_prepass": true,
+    "use_bvh_fallback": true,
+    "glow_thickness_visible": 1.5,
+    "glow_thickness_hidden": 0.0,
+    "glow_intensity_visible": 1.0,
+    "glow_intensity_hidden": 1.0,
+    "glow_color_visible": [
+        255,
+        0,
+        255,
+        204
+    ],
+    "glow_color_invisible": [
+        255,
+        0,
+        0,
+        204
+    ]
+}
