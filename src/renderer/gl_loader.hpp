@@ -14,6 +14,7 @@
 #define GL_FRAMEBUFFER                    0x8D40
 #define GL_RENDERBUFFER                   0x8D41
 #define GL_COLOR_ATTACHMENT0              0x8CE0
+#define GL_COLOR_ATTACHMENT1              0x8CE1
 #define GL_DEPTH_ATTACHMENT               0x8D00
 #define GL_DEPTH_STENCIL_ATTACHMENT       0x821A
 #define GL_DEPTH24_STENCIL8               0x88F0
@@ -54,6 +55,7 @@ typedef void (APIENTRY * PFNGLDELETEPROGRAMPROC) (GLuint program);
 typedef GLint (APIENTRY * PFNGLGETUNIFORMLOCATIONPROC) (GLuint program, const GLchar *name);
 typedef void (APIENTRY * PFNGLUNIFORM1IPROC) (GLint location, GLint v0);
 typedef void (APIENTRY * PFNGLUNIFORM1FPROC) (GLint location, GLfloat v0);
+typedef void (APIENTRY * PFNGLUNIFORM2FPROC) (GLint location, GLfloat v0, GLfloat v1);
 typedef void (APIENTRY * PFNGLUNIFORM3FVPROC) (GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRY * PFNGLUNIFORM4FVPROC) (GLint location, GLsizei count, const GLfloat *value);
 typedef void (APIENTRY * PFNGLUNIFORMMATRIX4FVPROC) (GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
@@ -71,6 +73,7 @@ typedef GLenum (APIENTRY * PFNGLCHECKFRAMEBUFFERSTATUSPROC) (GLenum target);
 typedef void (APIENTRY * PFNGLBLITFRAMEBUFFERPROC) (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
 typedef void (APIENTRY * PFNGLDELETEFRAMEBUFFERSPROC) (GLsizei n, const GLuint *framebuffers);
 typedef void (APIENTRY * PFNGLDELETERENDERBUFFERSPROC) (GLsizei n, const GLuint *renderbuffers);
+typedef void (APIENTRY * PFNGLDRAWBUFFERSPROC) (GLsizei n, const GLenum *bufs);
 
 // Inline function pointers
 inline PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
@@ -101,6 +104,7 @@ inline PFNGLDELETEPROGRAMPROC glDeleteProgram = nullptr;
 inline PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = nullptr;
 inline PFNGLUNIFORM1IPROC glUniform1i = nullptr;
 inline PFNGLUNIFORM1FPROC glUniform1f = nullptr;
+inline PFNGLUNIFORM2FPROC glUniform2f = nullptr;
 inline PFNGLUNIFORM3FVPROC glUniform3fv = nullptr;
 inline PFNGLUNIFORM4FVPROC glUniform4fv = nullptr;
 inline PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = nullptr;
@@ -118,6 +122,7 @@ inline PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus = nullptr;
 inline PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = nullptr;
 inline PFNGLDELETEFRAMEBUFFERSPROC glDeleteFramebuffers = nullptr;
 inline PFNGLDELETERENDERBUFFERSPROC glDeleteRenderbuffers = nullptr;
+inline PFNGLDRAWBUFFERSPROC glDrawBuffers = nullptr;
 
 inline bool load_gl_functions() {
     auto get_proc = [](const char* name) -> void* {
@@ -156,6 +161,7 @@ inline bool load_gl_functions() {
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)get_proc("glGetUniformLocation");
     glUniform1i = (PFNGLUNIFORM1IPROC)get_proc("glUniform1i");
     glUniform1f = (PFNGLUNIFORM1FPROC)get_proc("glUniform1f");
+    glUniform2f = (PFNGLUNIFORM2FPROC)get_proc("glUniform2f");
     glUniform3fv = (PFNGLUNIFORM3FVPROC)get_proc("glUniform3fv");
     glUniform4fv = (PFNGLUNIFORM4FVPROC)get_proc("glUniform4fv");
     glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)get_proc("glUniformMatrix4fv");
@@ -173,7 +179,9 @@ inline bool load_gl_functions() {
     glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)get_proc("glBlitFramebuffer");
     glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)get_proc("glDeleteFramebuffers");
     glDeleteRenderbuffers = (PFNGLDELETERENDERBUFFERSPROC)get_proc("glDeleteRenderbuffers");
+    glDrawBuffers = (PFNGLDRAWBUFFERSPROC)get_proc("glDrawBuffers");
 
     return glGenVertexArrays && glBindVertexArray && glGenBuffers && glBindBuffer && glBufferData &&
-           glCreateShader && glShaderSource && glCompileShader && glCreateProgram && glLinkProgram && glUseProgram;
+           glCreateShader && glShaderSource && glCompileShader && glCreateProgram && glLinkProgram && glUseProgram &&
+           glDrawBuffers;
 }

@@ -157,6 +157,7 @@ void OverlayClient::init_window(int x, int y, bool hyprland_support) {
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_STENCIL_BITS, 8);
 
     window = glfwCreateWindow(width, height, "fc2_chams.overlay", nullptr, nullptr);
     if (!window) {
@@ -211,7 +212,7 @@ void OverlayClient::begin_frame() {
     }
 
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 void OverlayClient::draw_fps(int fps) {

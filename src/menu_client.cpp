@@ -194,13 +194,6 @@ void MenuClient::render_ui() {
             
             if (cfg.style_vis != "disabled") {
                 ImGui::ColorEdit4("Visible Body Color", cfg.color_vis, ImGuiColorEditFlags_AlphaBar);
-                
-                // Only show glow properties if style has glow active
-                if (cfg.style_vis == "glow_blend" || cfg.style_vis == "cs2_glow") {
-                    ImGui::SliderFloat("Glow Thickness##Vis", &cfg.glow_thickness_vis, 0.0f, 5.0f, "%.2f");
-                    ImGui::SliderFloat("Glow Intensity##Vis", &cfg.glow_intensity_vis, 0.0f, 3.0f, "%.2f");
-                    ImGui::ColorEdit4("Glow Color##Vis", cfg.glow_color_vis, ImGuiColorEditFlags_AlphaBar);
-                }
             }
             ImGui::Spacing();
             ImGui::Spacing();
@@ -214,13 +207,39 @@ void MenuClient::render_ui() {
                 render_style_combo("Hidden Style", cfg.style_invis);
                 if (cfg.style_invis != "disabled") {
                     ImGui::ColorEdit4("Hidden Body Color", cfg.color_invis, ImGuiColorEditFlags_AlphaBar);
-                    
-                    if (cfg.style_invis == "glow_blend" || cfg.style_invis == "cs2_glow") {
-                        ImGui::SliderFloat("Glow Thickness##Invis", &cfg.glow_thickness_invis, 0.0f, 5.0f, "%.2f");
-                        ImGui::SliderFloat("Glow Intensity##Invis", &cfg.glow_intensity_invis, 0.0f, 3.0f, "%.2f");
-                        ImGui::ColorEdit4("Glow Color##Invis", cfg.glow_color_invis, ImGuiColorEditFlags_AlphaBar);
-                    }
                 }
+            }
+            ImGui::Spacing();
+            ImGui::Spacing();
+
+            // Outline Glow Header
+            ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.9f, 1.0f), "Outline Glow (Always Visible)");
+            ImGui::Separator();
+            ImGui::Checkbox("Enable Outline Glow", &cfg.glow_enabled);
+            
+            if (cfg.glow_enabled) {
+                ImGui::Spacing();
+
+                ImGui::Text("Glow Color:");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::ColorEdit4("##GlowColor", cfg.glow_color, ImGuiColorEditFlags_AlphaBar);
+
+                ImGui::Text("Glow Thickness: %.2f", cfg.glow_thickness);
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##GlowThickness", &cfg.glow_thickness, 0.0f, 6.0f, "%.2f");
+
+                ImGui::Text("Glow Strength: %.2f", cfg.glow_intensity);
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##GlowIntensity", &cfg.glow_intensity, 0.0f, 5.0f, "%.2f");
+
+                ImGui::Spacing();
+                ImGui::Checkbox("Enable Breathing/Pulse Effect", &cfg.glow_pulse);
+                if (cfg.glow_pulse) {
+                    ImGui::Text("Pulse Speed: %.2f", cfg.glow_pulse_speed);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##GlowPulseSpeed", &cfg.glow_pulse_speed, 0.1f, 10.0f, "%.2f");
+                }
+                ImGui::Spacing();
             }
 
             ImGui::EndTabItem();

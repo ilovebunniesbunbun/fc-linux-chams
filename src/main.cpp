@@ -675,8 +675,6 @@ int main() {
         }
 
         // 2. Render Player Chams
-        chams_renderer.begin(gl_vp, cam_pos_arr);
-
         // Capture raytrace visibility safely
         std::vector<float> rendering_vis;
         {
@@ -684,12 +682,25 @@ int main() {
             rendering_vis = global_player_visibility;
         }
 
+        struct RenderPalette {
+            const CachedModel* model;
+            std::vector<source2::Mat3x4> skinning_palette;
+            bool is_visible;
+        };
+
+        std::vector<RenderPalette> render_palettes(packet.player_count);
         for (int i = 0; i < packet.player_count; ++i) {
             const auto& player = packet.players[i];
-            if (!player.active) continue;
+            if (!player.active) {
+                render_palettes[i].model = nullptr;
+                continue;
+            }
 
             const auto* model = model_cache.get_or_load(player.model_name);
-            if (!model || !model->valid) continue;
+            if (!model || !model->valid) {
+                render_palettes[i].model = nullptr;
+                continue;
+            }
 
             // Convert raw bone transforms to 3x4 world matrices
             std::vector<source2::Mat3x4> world_bones(model->mesh.bone_count);
@@ -716,58 +727,84 @@ int main() {
                 }
             }
 
-            // Draw player passes
+            bool is_player_visible = true;
+            if (!has_prepass) {
+                int head_idx = i * 128 + 6; // head/neck joint
+                if (head_idx < static_cast<int>(rendering_vis.size())) {
+                    is_player_visible = (rendering_vis[head_idx] > 0.5f);
+                }
+            }
+
+            render_palettes[i] = { model, skinning_palette, is_player_visible };
+        }
+
+        // Step 1: Glow Pass (render silhouettes and masks to FBO, blur, and composite)
+        if (cfg.glow_enabled) {
+            chams_renderer.begin_glow_pass(width, height, gl_vp, cam_pos_arr);
+            for (int i = 0; i < packet.player_count; ++i) {
+                const auto& rp = render_palettes[i];
+                if (!rp.model) continue;
+
+                if (rp.is_visible || cfg.show_invisible) {
+                    chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                          rp.skinning_palette, cfg.glow_color);
+                }
+            }
+
+            float current_intensity = cfg.glow_intensity;
+            if (cfg.glow_pulse) {
+                float time = static_cast<float>(glfwGetTime());
+                float factor = 0.625f + 0.375f * std::sin(time * cfg.glow_pulse_speed);
+                current_intensity *= factor;
+            }
+            chams_renderer.end_glow_pass(width, height, cfg.glow_thickness, current_intensity);
+        }
+
+        // Step 2: Body Pass (render chams overlay on screen)
+        chams_renderer.begin_body_pass(gl_vp, cam_pos_arr);
+        for (int i = 0; i < packet.player_count; ++i) {
+            const auto& rp = render_palettes[i];
+            if (!rp.model) continue;
+
             if (has_prepass) {
                 // Pixel-perfect depth prepass occlusion:
                 // A) Render hidden pass: depth test = GL_GREATER, depth write disabled
                 if (style_invis_id > 0 && cfg.show_invisible) {
                     glDepthFunc(GL_GREATER);
                     glDepthMask(GL_FALSE);
-                    chams_renderer.render_mesh(model->vao, model->ibo, model->index_count, 
-                                               skinning_palette, cfg.color_invis, style_invis_id,
-                                               cfg.glow_color_invis, cfg.glow_thickness_invis, cfg.glow_intensity_invis);
+                    chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
+                                               rp.skinning_palette, cfg.color_invis, style_invis_id,
+                                               nullptr, 0.0f, 0.0f);
                 }
                 
                 // B) Render visible pass: depth test = GL_LEQUAL, depth write enabled
                 if (style_vis_id > 0) {
                     glDepthFunc(GL_LEQUAL);
                     glDepthMask(GL_TRUE);
-                    chams_renderer.render_mesh(model->vao, model->ibo, model->index_count, 
-                                               skinning_palette, cfg.color_vis, style_vis_id,
-                                               cfg.glow_color_vis, cfg.glow_thickness_vis, cfg.glow_intensity_vis);
+                    chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
+                                               rp.skinning_palette, cfg.color_vis, style_vis_id,
+                                               nullptr, 0.0f, 0.0f);
                 }
             } 
             else {
-                // Fallback CPU Raytrace visibility mode (submits separate vertices based on raycast output)
-                // Since this uses basic chams renderer, we can render the whole player with visible color if vischeck is OK, 
-                // or separate it per joint. To simulate visible vs hidden style:
-                // We draw the player once using visible color where raytrace succeeded, and invis color where it failed.
-                // Or to keep it simple and clean, draw once using vis_style or invis_style based on player head/neck visibility.
-                bool is_player_visible = true;
-                int head_idx = i * 128 + 6; // head/neck joint
-                if (head_idx < static_cast<int>(rendering_vis.size())) {
-                    is_player_visible = (rendering_vis[head_idx] > 0.5f);
-                }
-
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_TRUE);
-                if (is_player_visible) {
+                if (rp.is_visible) {
                     if (style_vis_id > 0) {
-                        chams_renderer.render_mesh(model->vao, model->ibo, model->index_count,
-                                                   skinning_palette, cfg.color_vis, style_vis_id,
-                                                   cfg.glow_color_vis, cfg.glow_thickness_vis, cfg.glow_intensity_vis);
+                        chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                   rp.skinning_palette, cfg.color_vis, style_vis_id,
+                                                   nullptr, 0.0f, 0.0f);
                     }
                 } else {
                     if (style_invis_id > 0 && cfg.show_invisible) {
-                        chams_renderer.render_mesh(model->vao, model->ibo, model->index_count,
-                                                   skinning_palette, cfg.color_invis, style_invis_id,
-                                                   cfg.glow_color_invis, cfg.glow_thickness_invis, cfg.glow_intensity_invis);
+                        chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                   rp.skinning_palette, cfg.color_invis, style_invis_id,
+                                                   nullptr, 0.0f, 0.0f);
                     }
                 }
             }
         }
-
-        chams_renderer.end();
+        chams_renderer.end_body_pass();
 
         // 3. Draw 2D FPS Counter Overlay
         if (cfg.show_fps) {

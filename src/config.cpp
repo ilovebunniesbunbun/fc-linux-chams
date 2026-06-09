@@ -38,12 +38,12 @@ OverlayConfig load_config(const std::string& filename) {
                 {"chams_style_hidden", "flat"},
                 {"use_depth_prepass", true},
                 {"use_bvh_fallback", true},
-                {"glow_thickness_visible", 1.5},
-                {"glow_thickness_hidden", 0.0},
-                {"glow_intensity_visible", 1.0},
-                {"glow_intensity_hidden", 1.0},
-                {"glow_color_visible", {255, 0, 255, 204}},
-                {"glow_color_invisible", {255, 0, 0, 204}}
+                {"glow_enabled", false},
+                {"glow_thickness", 1.5},
+                {"glow_intensity", 1.0},
+                {"glow_color", {255, 0, 255, 204}},
+                {"glow_pulse", false},
+                {"glow_pulse_speed", 2.0}
             };
             outfile << default_json.dump(4) << std::endl;
             outfile.close();
@@ -87,19 +87,15 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("use_depth_prepass")) cfg.use_depth_prepass = j["use_depth_prepass"].get<bool>();
         if (j.contains("use_bvh_fallback")) cfg.use_bvh_fallback = j["use_bvh_fallback"].get<bool>();
 
-        if (j.contains("glow_thickness_visible")) cfg.glow_thickness_vis = j["glow_thickness_visible"].get<float>();
-        if (j.contains("glow_thickness_hidden")) cfg.glow_thickness_invis = j["glow_thickness_hidden"].get<float>();
-        if (j.contains("glow_intensity_visible")) cfg.glow_intensity_vis = j["glow_intensity_visible"].get<float>();
-        if (j.contains("glow_intensity_hidden")) cfg.glow_intensity_invis = j["glow_intensity_hidden"].get<float>();
+        if (j.contains("glow_enabled")) cfg.glow_enabled = j["glow_enabled"].get<bool>();
+        if (j.contains("glow_thickness")) cfg.glow_thickness = j["glow_thickness"].get<float>();
+        if (j.contains("glow_intensity")) cfg.glow_intensity = j["glow_intensity"].get<float>();
+        if (j.contains("glow_pulse")) cfg.glow_pulse = j["glow_pulse"].get<bool>();
+        if (j.contains("glow_pulse_speed")) cfg.glow_pulse_speed = j["glow_pulse_speed"].get<float>();
 
-        if (j.contains("glow_color_visible") && j["glow_color_visible"].is_array() && j["glow_color_visible"].size() == 4) {
+        if (j.contains("glow_color") && j["glow_color"].is_array() && j["glow_color"].size() == 4) {
             for (int i = 0; i < 4; ++i) {
-                cfg.glow_color_vis[i] = j["glow_color_visible"][i].get<float>() / 255.0f;
-            }
-        }
-        if (j.contains("glow_color_invisible") && j["glow_color_invisible"].is_array() && j["glow_color_invisible"].size() == 4) {
-            for (int i = 0; i < 4; ++i) {
-                cfg.glow_color_invis[i] = j["glow_color_invisible"][i].get<float>() / 255.0f;
+                cfg.glow_color[i] = j["glow_color"][i].get<float>() / 255.0f;
             }
         }
     } catch (...) {}
@@ -149,21 +145,16 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"chams_style_hidden", cfg.style_invis},
         {"use_depth_prepass", cfg.use_depth_prepass},
         {"use_bvh_fallback", cfg.use_bvh_fallback},
-        {"glow_thickness_visible", cfg.glow_thickness_vis},
-        {"glow_thickness_hidden", cfg.glow_thickness_invis},
-        {"glow_intensity_visible", cfg.glow_intensity_vis},
-        {"glow_intensity_hidden", cfg.glow_intensity_invis},
-        {"glow_color_visible", {
-            static_cast<int>(cfg.glow_color_vis[0] * 255.0f),
-            static_cast<int>(cfg.glow_color_vis[1] * 255.0f),
-            static_cast<int>(cfg.glow_color_vis[2] * 255.0f),
-            static_cast<int>(cfg.glow_color_vis[3] * 255.0f)
-        }},
-        {"glow_color_invisible", {
-            static_cast<int>(cfg.glow_color_invis[0] * 255.0f),
-            static_cast<int>(cfg.glow_color_invis[1] * 255.0f),
-            static_cast<int>(cfg.glow_color_invis[2] * 255.0f),
-            static_cast<int>(cfg.glow_color_invis[3] * 255.0f)
+        {"glow_enabled", cfg.glow_enabled},
+        {"glow_thickness", cfg.glow_thickness},
+        {"glow_intensity", cfg.glow_intensity},
+        {"glow_pulse", cfg.glow_pulse},
+        {"glow_pulse_speed", cfg.glow_pulse_speed},
+        {"glow_color", {
+            static_cast<int>(cfg.glow_color[0] * 255.0f),
+            static_cast<int>(cfg.glow_color[1] * 255.0f),
+            static_cast<int>(cfg.glow_color[2] * 255.0f),
+            static_cast<int>(cfg.glow_color[3] * 255.0f)
         }}
     };
 

@@ -27,12 +27,12 @@ struct OverlayConfig {
     bool use_bvh_fallback = true;
 
     // Glow shader options
-    float glow_color_vis[4] = {1.0f, 0.0f, 1.0f, 0.8f};
-    float glow_color_invis[4] = {1.0f, 0.0f, 0.0f, 0.8f};
-    float glow_thickness_vis = 1.5f;
-    float glow_thickness_invis = 0.0f;
-    float glow_intensity_vis = 1.0f;
-    float glow_intensity_invis = 1.0f;
+    bool glow_enabled = false;
+    float glow_color[4] = {1.0f, 0.0f, 1.0f, 0.8f};
+    float glow_thickness = 1.5f;
+    float glow_intensity = 1.0f;
+    bool glow_pulse = false;
+    float glow_pulse_speed = 2.0f;
 };
 
 OverlayConfig load_config(const std::string& filename);
