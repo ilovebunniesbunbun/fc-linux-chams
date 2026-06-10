@@ -24,13 +24,7 @@
 
 using json = nlohmann::json;
 
-inline Vec3 operator-(const Vec3& a, const Vec3& b) {
-    return { a.x - b.x, a.y - b.y, a.z - b.z };
-}
 
-inline Vec3 operator*(const Vec3& a, float b) {
-    return { a.x * b, a.y * b, a.z * b };
-}
 
 class ViewMatrixExtrapolator {
 private:
@@ -371,6 +365,12 @@ void sanitize_lod_bones(source2::Mat3x4* bones, int bone_count, const AgentParse
     }
 }
 
+struct Vec2 {
+    float x, y;
+};
+
+#include "esp_drawing.hpp"
+
 int main() {
     std::cout << "FC2 CHAMS V2: Launching GPU-Skinned Linux Overlay..." << std::endl;
 
@@ -497,9 +497,11 @@ int main() {
 
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_print).count() >= 5) {
-                std::cout << "FC2 CHAMS V2: Bridge active - received " << packet_count_since_print 
-                          << " packets in last 5s (frame index: " << packet.frame_index 
-                          << ", players tracked: " << packet.player_count << ")" << std::endl;
+                if (cfg.debug_bridge) {
+                    std::cout << "FC2 CHAMS V2: Bridge active - received " << packet_count_since_print 
+                              << " packets in last 5s (frame index: " << packet.frame_index 
+                              << ", players tracked: " << packet.player_count << ")" << std::endl;
+                }
                 last_debug_print = now;
                 packet_count_since_print = 0;
             }
@@ -654,6 +656,13 @@ int main() {
             }
         }
 
+        static double last_frame_time = glfwGetTime();
+        double current_frame_time = glfwGetTime();
+        float dt = static_cast<float>(current_frame_time - last_frame_time);
+        last_frame_time = current_frame_time;
+        if (dt < 0.0f) dt = 0.0f;
+        if (dt > 0.15f) dt = 0.15f;
+
         // Transpose row-major View-Proj to column-major for OpenGL shaders
         float gl_vp[16];
         for (int c = 0; c < 4; c++) {
@@ -686,6 +695,7 @@ int main() {
             const CachedModel* model;
             std::vector<source2::Mat3x4> skinning_palette;
             bool is_visible;
+            std::vector<Vec3> sanitized_bones;
         };
 
         std::vector<RenderPalette> render_palettes(packet.player_count);
@@ -717,6 +727,16 @@ int main() {
             // Sanitise bones for LOD issues
             sanitize_lod_bones(world_bones.data(), model->mesh.bone_count, model->mesh);
 
+            // Extract sanitized world positions for ESP logic (fixes game LOD issues)
+            std::vector<Vec3> sanitized_bones(model->mesh.bone_count);
+            for (int j = 0; j < model->mesh.bone_count; ++j) {
+                sanitized_bones[j] = {
+                    world_bones[j].mat[0][3],
+                    world_bones[j].mat[1][3],
+                    world_bones[j].mat[2][3]
+                };
+            }
+
             // Multiply by inverse bind poses to build final skinned joint palette
             std::vector<source2::Mat3x4> skinning_palette(model->mesh.bone_count);
             for (int j = 0; j < model->mesh.bone_count; ++j) {
@@ -729,52 +749,127 @@ int main() {
 
             bool is_player_visible = true;
             if (!has_prepass) {
-                int head_idx = i * 128 + 6; // head/neck joint
+                int head_idx = i * 128 + 7; // head joint
                 if (head_idx < static_cast<int>(rendering_vis.size())) {
                     is_player_visible = (rendering_vis[head_idx] > 0.5f);
                 }
             }
 
-            render_palettes[i] = { model, skinning_palette, is_player_visible };
+            render_palettes[i] = { model, skinning_palette, is_player_visible, sanitized_bones };
         }
 
         // Step 1: Glow Pass (render silhouettes and masks to FBO, blur, and composite)
-        if (cfg.glow_enabled) {
+        bool run_glow = cfg.glow_enabled || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
+        if (run_glow) {
             chams_renderer.begin_glow_pass(width, height, gl_vp, cam_pos_arr);
-            for (int i = 0; i < packet.player_count; ++i) {
-                const auto& rp = render_palettes[i];
-                if (!rp.model) continue;
+            
+            if (cfg.glow_enabled) {
+                for (int i = 0; i < packet.player_count; ++i) {
+                    const auto& rp = render_palettes[i];
+                    if (!rp.model) continue;
 
-                if (rp.is_visible || cfg.show_invisible) {
-                    if (cfg.glow_health_based) {
-                        float hp_factor = static_cast<float>(packet.players[i].health) / 100.0f;
-                        if (hp_factor < 0.0f) hp_factor = 0.0f;
-                        if (hp_factor > 1.0f) hp_factor = 1.0f;
+                    if (rp.is_visible || cfg.show_invisible) {
+                        if (cfg.glow_health_based) {
+                            float hp_factor = static_cast<float>(packet.players[i].health) / 100.0f;
+                            if (hp_factor < 0.0f) hp_factor = 0.0f;
+                            if (hp_factor > 1.0f) hp_factor = 1.0f;
 
-                        float custom_color[4];
-                        for (int c = 0; c < 4; ++c) {
-                            custom_color[c] = cfg.glow_health_end[c] + hp_factor * (cfg.glow_health_start[c] - cfg.glow_health_end[c]);
+                            float custom_color[4];
+                            for (int c = 0; c < 4; ++c) {
+                                custom_color[c] = cfg.glow_health_end[c] + hp_factor * (cfg.glow_health_start[c] - cfg.glow_health_end[c]);
+                            }
+
+                            chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                                  rp.skinning_palette, custom_color);
+                        } else {
+                            chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
+                                                                  rp.skinning_palette, cfg.glow_color);
                         }
-
-                        chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                              rp.skinning_palette, custom_color);
-                    } else {
-                        chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                              rp.skinning_palette, cfg.glow_color);
                     }
                 }
             }
 
-            float current_intensity = cfg.glow_intensity;
-            if (cfg.glow_pulse) {
+            if (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow) {
+                glUseProgram(0);
+                glDisable(GL_TEXTURE_2D);
+
+                GLenum drawBuffer = GL_COLOR_ATTACHMENT0;
+                glDrawBuffers(1, &drawBuffer);
+
+                glMatrixMode(GL_PROJECTION);
+                glPushMatrix();
+                glLoadMatrixf(gl_vp);
+                glMatrixMode(GL_MODELVIEW);
+                glPushMatrix();
+                glLoadIdentity();
+
+                float pulse_factor = 1.0f;
+                if (cfg.esp_skeleton_glow_pulse) {
+                    float time = static_cast<float>(glfwGetTime());
+                    pulse_factor = 0.625f + 0.375f * std::sin(time * cfg.esp_skeleton_glow_pulse_speed);
+                }
+
+                for (int i = 0; i < packet.player_count; ++i) {
+                    const auto& rp = render_palettes[i];
+                    if (!rp.model) continue;
+
+                    float custom_glow_color[4];
+                    const float* glow_color_ptr = nullptr;
+                    if (cfg.esp_skeleton_glow_health_based) {
+                        float hp_factor = static_cast<float>(packet.players[i].health) / 100.0f;
+                        if (hp_factor < 0.0f) hp_factor = 0.0f;
+                        if (hp_factor > 1.0f) hp_factor = 1.0f;
+
+                        for (int c = 0; c < 4; ++c) {
+                            custom_glow_color[c] = cfg.esp_skeleton_glow_health_end[c] + hp_factor * (cfg.esp_skeleton_glow_health_start[c] - cfg.esp_skeleton_glow_health_end[c]);
+                        }
+                        glow_color_ptr = custom_glow_color;
+                    }
+
+                    draw_skeleton(rp.sanitized_bones, i, rendering_vis, gl_vp, cfg, has_prepass, true, pulse_factor, glow_color_ptr);
+                }
+
+                glMatrixMode(GL_PROJECTION);
+                glPopMatrix();
+                glMatrixMode(GL_MODELVIEW);
+                glPopMatrix();
+
+                GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+                glDrawBuffers(2, drawBuffers);
+            }
+
+            float current_thickness = cfg.glow_enabled ? cfg.glow_thickness : cfg.esp_skeleton_glow_thickness;
+            float current_intensity = cfg.glow_enabled ? cfg.glow_intensity : cfg.esp_skeleton_glow_intensity;
+            bool should_pulse = cfg.glow_enabled ? cfg.glow_pulse : cfg.esp_skeleton_glow_pulse;
+            float pulse_speed = cfg.glow_enabled ? cfg.glow_pulse_speed : cfg.esp_skeleton_glow_pulse_speed;
+
+            if (should_pulse) {
                 float time = static_cast<float>(glfwGetTime());
-                float factor = 0.625f + 0.375f * std::sin(time * cfg.glow_pulse_speed);
+                float factor = 0.625f + 0.375f * std::sin(time * pulse_speed);
                 current_intensity *= factor;
             }
-            chams_renderer.end_glow_pass(width, height, cfg.glow_thickness, current_intensity);
+            chams_renderer.end_glow_pass(width, height, current_thickness, current_intensity);
+        }
+
+        // 1. Draw 3D Skeleton (drawn before body pass so it is underneath semi-transparent chams,
+        // allowing chams to write depth correctly without occluding the skeleton)
+        if (cfg.esp_enabled && cfg.esp_skeleton) {
+            for (int i = 0; i < packet.player_count; ++i) {
+                const auto& rp = render_palettes[i];
+                if (!rp.model) continue;
+
+                draw_skeleton(rp.sanitized_bones, i, rendering_vis, gl_vp, cfg, has_prepass, false, 1.0f);
+            }
         }
 
         // Step 2: Body Pass (render chams overlay on screen)
+        float current_glow_intensity = cfg.glow_intensity;
+        if (cfg.glow_pulse) {
+            float time = static_cast<float>(glfwGetTime());
+            float factor = 0.625f + 0.375f * std::sin(time * cfg.glow_pulse_speed);
+            current_glow_intensity *= factor;
+        }
+
         chams_renderer.begin_body_pass(gl_vp, cam_pos_arr);
         for (int i = 0; i < packet.player_count; ++i) {
             const auto& rp = render_palettes[i];
@@ -788,7 +883,7 @@ int main() {
                     glDepthMask(GL_FALSE);
                     chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
                                                rp.skinning_palette, cfg.color_invis, style_invis_id,
-                                               nullptr, 0.0f, 0.0f);
+                                               cfg.color_invis_sec, 0.0f, current_glow_intensity);
                 }
                 
                 // B) Render visible pass: depth test = GL_LEQUAL, depth write enabled
@@ -797,7 +892,7 @@ int main() {
                     glDepthMask(GL_TRUE);
                     chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
                                                rp.skinning_palette, cfg.color_vis, style_vis_id,
-                                               nullptr, 0.0f, 0.0f);
+                                               cfg.color_vis_sec, 0.0f, current_glow_intensity);
                 }
             } 
             else {
@@ -807,18 +902,87 @@ int main() {
                     if (style_vis_id > 0) {
                         chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
                                                    rp.skinning_palette, cfg.color_vis, style_vis_id,
-                                                   nullptr, 0.0f, 0.0f);
+                                                   cfg.color_vis_sec, 0.0f, current_glow_intensity);
                     }
                 } else {
                     if (style_invis_id > 0 && cfg.show_invisible) {
                         chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
                                                    rp.skinning_palette, cfg.color_invis, style_invis_id,
-                                                   nullptr, 0.0f, 0.0f);
+                                                   cfg.color_invis_sec, 0.0f, current_glow_intensity);
                     }
                 }
             }
         }
         chams_renderer.end_body_pass();
+        glDepthMask(GL_TRUE); // Restore depth writes
+
+        // Render ESP Overlay (Skeleton, Box, Health Bar)
+        if (cfg.esp_enabled) {
+            static float smoothed_health[64] = { -1.0f };
+            static bool player_active_last[64] = { false };
+
+            // 3D Skeleton drawn before body pass
+
+            // 2. Draw 2D Box & Health Bar
+            if (cfg.esp_box || cfg.esp_health_bar) {
+                glDisable(GL_DEPTH_TEST);
+                glUseProgram(0);
+                glMatrixMode(GL_PROJECTION);
+                glPushMatrix();
+                glLoadIdentity();
+                glOrtho(0, width, height, 0, -10.0, 10.0);
+                glMatrixMode(GL_MODELVIEW);
+                glPushMatrix();
+                glLoadIdentity();
+                for (int i = 0; i < packet.player_count; ++i) {
+                    const auto& rp = render_palettes[i];
+                    if (!rp.model) {
+                        player_active_last[i] = false;
+                        continue;
+                    }
+                    const auto& player = packet.players[i];
+
+                    if (!player_active_last[i] || smoothed_health[i] < 0.0f) {
+                        smoothed_health[i] = static_cast<float>(player.health);
+                        player_active_last[i] = true;
+                    } else {
+                        smoothed_health[i] += (player.health - smoothed_health[i]) * std::clamp(10.0f * dt, 0.0f, 1.0f);
+                        if (std::abs(player.health - smoothed_health[i]) > 50.0f) {
+                            smoothed_health[i] = static_cast<float>(player.health);
+                        }
+                    }
+
+                    float bx, by, bw, bh;
+                    if (get_player_bounds(rp.sanitized_bones, player.origin, packet.local_eye, render_view_matrix, width, height, bx, by, bw, bh, cfg)) {
+                        bool is_visible = true;
+                        int head_idx = i * 128 + 7; // head joint
+                        if (head_idx < static_cast<int>(rendering_vis.size())) {
+                            is_visible = (rendering_vis[head_idx] > 0.5f);
+                        }
+
+                        if (!is_visible && !cfg.show_invisible) {
+                            continue;
+                        }
+
+                        // Draw bounding box
+                        if (cfg.esp_box) {
+                            draw_outlined_rect(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
+                        }
+
+                        // Draw health bar
+                        if (cfg.esp_health_bar) {
+                            draw_health_bar(bx, by, bw, bh, smoothed_health[i], cfg);
+                        }
+                    }
+                }
+
+                glMatrixMode(GL_PROJECTION);
+                glPopMatrix();
+                glMatrixMode(GL_MODELVIEW);
+                glPopMatrix();
+                glEnable(GL_DEPTH_TEST);
+            }
+        }
 
         // 3. Draw 2D FPS Counter Overlay
         if (cfg.show_fps) {

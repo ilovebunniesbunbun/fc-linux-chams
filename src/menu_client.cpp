@@ -4,6 +4,7 @@
 #include "external/imgui/imgui_impl_opengl3.h"
 #include "renderer/gpu_chams.hpp"
 #include "model_cache.hpp"
+#include "esp_drawing.hpp"
 #include "renderer/gl_loader.hpp"
 #include <iostream>
 #include <cstring>
@@ -154,7 +155,9 @@ void MenuClient::render_ui() {
     ImGui::Begin("FC2 Chams Settings Menu", nullptr, window_flags);
 
     // Title / Header Banner
-    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "FC2 CHAMS V2 CONTROL PANEL");
+    float title_width = ImGui::CalcTextSize("FC2-Chams Control Panel").x;
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - title_width) * 0.5f);
+    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "FC2-Chams Control Panel");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -207,6 +210,9 @@ void MenuClient::render_ui() {
             
             if (cfg.style_vis != "disabled") {
                 ImGui::ColorEdit4("Visible Body Color", cfg.color_vis, ImGuiColorEditFlags_AlphaBar);
+                if (cfg.style_vis == "glow_blend" || cfg.style_vis == "cs2_glow") {
+                    ImGui::ColorEdit4("Visible Body Color 2", cfg.color_vis_sec, ImGuiColorEditFlags_AlphaBar);
+                }
             }
             ImGui::Spacing();
             ImGui::Spacing();
@@ -220,6 +226,9 @@ void MenuClient::render_ui() {
                 render_style_combo("Hidden Style", cfg.style_invis);
                 if (cfg.style_invis != "disabled") {
                     ImGui::ColorEdit4("Hidden Body Color", cfg.color_invis, ImGuiColorEditFlags_AlphaBar);
+                    if (cfg.style_invis == "glow_blend" || cfg.style_invis == "cs2_glow") {
+                        ImGui::ColorEdit4("Hidden Body Color 2", cfg.color_invis_sec, ImGuiColorEditFlags_AlphaBar);
+                    }
                 }
             }
             ImGui::Spacing();
@@ -230,8 +239,18 @@ void MenuClient::render_ui() {
             ImGui::Separator();
             ImGui::Checkbox("Enable Outline Glow", &cfg.glow_enabled);
             
-            if (cfg.glow_enabled) {
+            bool show_glow_color_settings = cfg.glow_enabled || 
+                                           cfg.style_vis == "glow_blend" || cfg.style_vis == "cs2_glow" ||
+                                           (cfg.show_invisible && (cfg.style_invis == "glow_blend" || cfg.style_invis == "cs2_glow"));
+
+            if (show_glow_color_settings) {
                 ImGui::Spacing();
+
+                if (cfg.glow_enabled) {
+                    ImGui::Text("Glow Thickness: %.2f", cfg.glow_thickness);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##GlowThickness", &cfg.glow_thickness, 0.0f, 6.0f, "%.2f");
+                }
 
                 if (cfg.glow_health_based) {
                     ImGui::Text("Health Start Color (100 HP):");
@@ -250,10 +269,6 @@ void MenuClient::render_ui() {
                 ImGui::Checkbox("Health-Based Color", &cfg.glow_health_based);
                 ImGui::SetItemTooltip("Interpolates glow color from Health Start Color (100 HP) to Health End Color (1 HP).");
 
-                ImGui::Text("Glow Thickness: %.2f", cfg.glow_thickness);
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::SliderFloat("##GlowThickness", &cfg.glow_thickness, 0.0f, 6.0f, "%.2f");
-
                 ImGui::Text("Glow Strength: %.2f", cfg.glow_intensity);
                 ImGui::SetNextItemWidth(-1.0f);
                 ImGui::SliderFloat("##GlowIntensity", &cfg.glow_intensity, 0.0f, 5.0f, "%.2f");
@@ -268,6 +283,77 @@ void MenuClient::render_ui() {
                 ImGui::Spacing();
             }
 
+            ImGui::EndTabItem();
+        }
+
+        // ----------------- TAB: ESP OVERLAY -----------------
+        if (ImGui::BeginTabItem("ESP Overlay")) {
+            ImGui::Spacing();
+            ImGui::Checkbox("Enable ESP Overlay", &cfg.esp_enabled);
+            ImGui::Separator();
+
+            if (cfg.esp_enabled) {
+                // Skeleton Section
+                ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Skeleton");
+                ImGui::Checkbox("Draw Skeleton##skele", &cfg.esp_skeleton);
+                if (cfg.esp_skeleton) {
+                    ImGui::Checkbox("Rounded Skeleton (Curved)", &cfg.esp_rounded_skeleton);
+                    ImGui::SliderFloat("Skeleton Thickness##skele_th", &cfg.esp_skeleton_thickness, 0.5f, 5.0f, "%.1f");
+                    ImGui::ColorEdit4("Visible Color##skele_vis", cfg.esp_skeleton_color_vis, ImGuiColorEditFlags_AlphaBar);
+                    ImGui::ColorEdit4("Occluded Color##skele_invis", cfg.esp_skeleton_color_invis, ImGuiColorEditFlags_AlphaBar);
+                    ImGui::Checkbox("Enable Skeleton Glow##skele_glow", &cfg.esp_skeleton_glow);
+                    if (cfg.esp_skeleton_glow) {
+                        ImGui::Checkbox("Glow Pulse##skele_glow_puls", &cfg.esp_skeleton_glow_pulse);
+                        if (cfg.esp_skeleton_glow_pulse) {
+                            ImGui::SliderFloat("Glow Pulse Speed##skele_glow_puls_spd", &cfg.esp_skeleton_glow_pulse_speed, 0.1f, 10.0f, "%.1f");
+                        }
+                        ImGui::SliderFloat("Glow Thickness##skele_glow_th", &cfg.esp_skeleton_glow_thickness, 0.1f, 10.0f, "%.1f");
+                        ImGui::SliderFloat("Glow Intensity##skele_glow_int", &cfg.esp_skeleton_glow_intensity, 0.1f, 5.0f, "%.1f");
+                        ImGui::Checkbox("Glow Health Based##skele_glow_hb", &cfg.esp_skeleton_glow_health_based);
+                        if (cfg.esp_skeleton_glow_health_based) {
+                            ImGui::ColorEdit4("Glow Health Start##skele_glow_hs", cfg.esp_skeleton_glow_health_start, ImGuiColorEditFlags_AlphaBar);
+                            ImGui::ColorEdit4("Glow Health End##skele_glow_he", cfg.esp_skeleton_glow_health_end, ImGuiColorEditFlags_AlphaBar);
+                        } else {
+                            ImGui::ColorEdit4("Glow Color##skele_glow_col", cfg.esp_skeleton_glow_color, ImGuiColorEditFlags_AlphaBar);
+                        }
+                    }
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // Box Section
+                ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Bounding Box");
+                ImGui::Checkbox("Draw Box##box", &cfg.esp_box);
+                if (cfg.esp_box) {
+                    ImGui::SliderFloat("Box Thickness##box_th", &cfg.esp_box_thickness, 0.5f, 5.0f, "%.1f");
+                    ImGui::ColorEdit4("Box Color##box_col", cfg.esp_box_color, ImGuiColorEditFlags_AlphaBar);
+                    ImGui::Checkbox("Box Outline##box_outl", &cfg.esp_box_outline);
+                    const char* box_modes[] = { "Dynamic (Bones)", "Dynamic (Feet + Head)", "Static (Distance-Based)" };
+                    ImGui::Combo("Box Mode##box_mode", &cfg.esp_box_mode, box_modes, IM_ARRAYSIZE(box_modes));
+
+                    if (cfg.esp_box_mode == 2) {
+                        ImGui::SliderFloat("Static Box Width##box_stat_w", &cfg.esp_box_static_w, 5000.0f, 80000.0f, "%.0f");
+                        ImGui::SliderFloat("Static Box Height##box_stat_h", &cfg.esp_box_static_h, 5000.0f, 120000.0f, "%.0f");
+                    }
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // Health Bar Section
+                ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Health Bar");
+                ImGui::Checkbox("Draw Health Bar##hp", &cfg.esp_health_bar);
+                if (cfg.esp_health_bar) {
+                    ImGui::SliderFloat("Health Bar Thickness##hp_th", &cfg.esp_health_bar_thickness, 0.5f, 10.0f, "%.1f");
+                    ImGui::Checkbox("Gradient##hp_grad", &cfg.esp_health_bar_gradient);
+                    if (cfg.esp_health_bar_gradient) {
+                        ImGui::ColorEdit4("Gradient High Health##hp_gh", cfg.esp_health_bar_gradient_start, ImGuiColorEditFlags_AlphaBar);
+                        ImGui::ColorEdit4("Gradient Low Health##hp_gl", cfg.esp_health_bar_gradient_end, ImGuiColorEditFlags_AlphaBar);
+                    } else {
+                        ImGui::ColorEdit4("Static Health Color##hp_col", cfg.esp_health_bar_color, ImGuiColorEditFlags_AlphaBar);
+                    }
+                    ImGui::Checkbox("Health Bar Outline##hp_outl", &cfg.esp_health_bar_outline);
+                }
+            }
             ImGui::EndTabItem();
         }
 
@@ -328,6 +414,9 @@ void MenuClient::render_ui() {
             
             ImGui::Checkbox("Hyprland Compatibility Mode", &cfg.hyprland_support);
             ImGui::SetItemTooltip("Bypasses X11 override_redirect. Useful for wlroots-based WMs like Hyprland.\nNote: Requires restarting the overlay application to take effect.");
+
+            ImGui::Checkbox("Debug Bridge Packets", &cfg.debug_bridge);
+            ImGui::SetItemTooltip("Toggles the logging of shared memory bridge packet stats in the terminal.");
 
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Geometry & Scaling");
@@ -408,7 +497,9 @@ void MenuClient::render_ui() {
 
     // Right column preview panel
     ImGui::BeginChild("RightPreviewPanel", ImVec2(0.0f, 0.0f), false);
-    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Chams Style Preview");
+    float preview_title_width = ImGui::CalcTextSize("Visuals Preview").x;
+    ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - preview_title_width) * 0.5f);
+    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Visuals Preview");
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -597,6 +688,14 @@ void MenuClient::render_preview() {
     float gl_vp[16];
     std::memcpy(gl_vp, view_proj, sizeof(float) * 16);
 
+    float row_major_vp[16];
+    for (int c = 0; c < 4; ++c) {
+        row_major_vp[0 * 4 + c] = view_proj[c * 4 + 0];
+        row_major_vp[1 * 4 + c] = view_proj[c * 4 + 1];
+        row_major_vp[2 * 4 + c] = view_proj[c * 4 + 2];
+        row_major_vp[3 * 4 + c] = view_proj[c * 4 + 3];
+    }
+
     float cam_pos[3] = { eye.x, eye.y, eye.z };
 
     std::vector<source2::Mat3x4> identity_bones(model->mesh.bone_count);
@@ -610,27 +709,146 @@ void MenuClient::render_preview() {
 
     int style_vis_id = get_style_id(cfg.style_vis);
 
-    if (cfg.glow_enabled) {
-        preview_renderer->begin_glow_pass(preview_w, preview_h, gl_vp, cam_pos);
-        preview_renderer->render_glow_silhouette(model->vao, model->ibo, model->index_count,
-                                                 identity_bones, cfg.glow_color);
+    // Calculate 3D bind-pose bone positions if ESP is enabled
+    std::vector<Vec3> preview_bones;
+    std::vector<float> dummy_vis;
+    if (cfg.esp_enabled) {
+        preview_bones.resize(model->mesh.bone_count);
+        for (int j = 0; j < model->mesh.bone_count; ++j) {
+            const auto& ibp = model->mesh.inv_bind_poses[j];
+            float px = -(ibp.mat[0][0] * ibp.mat[0][3] + ibp.mat[1][0] * ibp.mat[1][3] + ibp.mat[2][0] * ibp.mat[2][3]);
+            float py = -(ibp.mat[0][1] * ibp.mat[0][3] + ibp.mat[1][1] * ibp.mat[1][3] + ibp.mat[2][1] * ibp.mat[2][3]);
+            float pz = -(ibp.mat[0][2] * ibp.mat[0][3] + ibp.mat[1][2] * ibp.mat[1][3] + ibp.mat[2][2] * ibp.mat[2][3]);
+            preview_bones[j] = { px, py, pz };
+        }
+        dummy_vis.assign(128, 1.0f);
+    }
 
-        float current_intensity = cfg.glow_intensity;
-        if (cfg.glow_pulse) {
+    // 1. Draw Glow Pass (Chams glow and/or Skeleton glow)
+    bool draw_glow = cfg.glow_enabled || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
+    if (draw_glow) {
+        preview_renderer->begin_glow_pass(preview_w, preview_h, gl_vp, cam_pos);
+        if (cfg.glow_enabled) {
+            preview_renderer->render_glow_silhouette(model->vao, model->ibo, model->index_count,
+                                                     identity_bones, cfg.glow_color);
+        }
+
+        if (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow) {
+            glUseProgram(0);
+            glDisable(GL_TEXTURE_2D);
+
+            GLenum drawBuffer = GL_COLOR_ATTACHMENT0;
+            glDrawBuffers(1, &drawBuffer);
+
+            glMatrixMode(GL_PROJECTION);
+            glPushMatrix();
+            glLoadMatrixf(gl_vp);
+            glMatrixMode(GL_MODELVIEW);
+            glPushMatrix();
+            glLoadIdentity();
+
+            float override_glow_color[4] = { 0.0f };
+            if (cfg.esp_skeleton_glow_health_based) {
+                float hp_pct = 1.0f; // 100% health in preview
+                for (int c = 0; c < 4; ++c) {
+                    override_glow_color[c] = cfg.esp_skeleton_glow_health_start[c] * hp_pct +
+                                             cfg.esp_skeleton_glow_health_end[c] * (1.0f - hp_pct);
+                }
+            } else {
+                std::memcpy(override_glow_color, cfg.esp_skeleton_glow_color, sizeof(float)*4);
+            }
+
+            float pulse_factor = 1.0f;
+            if (cfg.esp_skeleton_glow_pulse) {
+                float time = static_cast<float>(glfwGetTime());
+                pulse_factor = 0.625f + 0.375f * std::sin(time * cfg.esp_skeleton_glow_pulse_speed);
+            }
+
+            draw_skeleton(preview_bones, 0, dummy_vis, gl_vp, cfg, false, true, pulse_factor, override_glow_color);
+
+            glMatrixMode(GL_PROJECTION);
+            glPopMatrix();
+            glMatrixMode(GL_MODELVIEW);
+            glPopMatrix();
+
+            GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+            glDrawBuffers(2, drawBuffers);
+        }
+
+        // Determine glow parameters for compositing
+        float glow_thick = cfg.glow_thickness;
+        float glow_int = cfg.glow_intensity;
+        bool pulse = cfg.glow_pulse;
+        float speed = cfg.glow_pulse_speed;
+
+        if (!cfg.glow_enabled && cfg.esp_skeleton_glow) {
+            glow_thick = cfg.esp_skeleton_glow_thickness;
+            glow_int = cfg.esp_skeleton_glow_intensity;
+            pulse = cfg.esp_skeleton_glow_pulse;
+            speed = cfg.esp_skeleton_glow_pulse_speed;
+        }
+
+        float current_intensity = glow_int;
+        if (pulse) {
             float time = static_cast<float>(glfwGetTime());
-            float factor = 0.625f + 0.375f * std::sin(time * cfg.glow_pulse_speed);
+            float factor = 0.625f + 0.375f * std::sin(time * speed);
             current_intensity *= factor;
         }
-        preview_renderer->end_glow_pass(preview_w, preview_h, cfg.glow_thickness, current_intensity, preview_fbo);
+
+        preview_renderer->end_glow_pass(preview_w, preview_h, glow_thick, current_intensity, preview_fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, preview_fbo);
     }
 
+    // 2. Draw Body Pass (Chams)
     if (style_vis_id > 0) {
+        float preview_glow_intensity = cfg.glow_intensity;
+        if (cfg.glow_pulse) {
+            float time = static_cast<float>(glfwGetTime());
+            float factor = 0.625f + 0.375f * std::sin(time * cfg.glow_pulse_speed);
+            preview_glow_intensity *= factor;
+        }
         preview_renderer->begin_body_pass(gl_vp, cam_pos);
         preview_renderer->render_mesh(model->vao, model->ibo, model->index_count,
                                      identity_bones, cfg.color_vis, style_vis_id,
-                                     nullptr, 0.0f, 0.0f);
+                                     cfg.color_vis_sec, 0.0f, preview_glow_intensity);
         preview_renderer->end_body_pass();
+    }
+
+    // 3. Draw 3D Skeleton
+    if (cfg.esp_enabled && cfg.esp_skeleton) {
+        draw_skeleton(preview_bones, 0, dummy_vis, gl_vp, cfg, false, false, 1.0f);
+    }
+
+    // 4. Draw 2D Box & Health Bar
+    if (cfg.esp_enabled && (cfg.esp_box || cfg.esp_health_bar)) {
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(0);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glOrtho(0, preview_w, preview_h, 0, -10.0, 10.0);
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
+
+        float bx, by, bw, bh;
+        Vec3 origin = { 0.0f, 0.0f, 0.0f };
+        Vec3 cam_pos_vec = { eye.x, eye.y, eye.z };
+
+        if (get_player_bounds(preview_bones, origin, cam_pos_vec, row_major_vp, preview_w, preview_h, bx, by, bw, bh, cfg)) {
+            if (cfg.esp_box) {
+                draw_outlined_rect(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
+            }
+            if (cfg.esp_health_bar) {
+                draw_health_bar(bx, by, bw, bh, 100.0f, cfg); // Rendered at 100% health in preview
+            }
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+        glPopMatrix();
+        glEnable(GL_DEPTH_TEST);
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);

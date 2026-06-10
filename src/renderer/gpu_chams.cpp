@@ -122,9 +122,12 @@ void main() {
         float outer = clamp(rimSoft * 0.55, 0.0, 1.0);
         
         float bloom = core * 0.85 + mid * 0.55 + outer * 0.25;
-        float alpha = clamp(bloom, 0.0, 1.0) * uColor.a * silhouetteAA;
+        float edgeAlpha = clamp(bloom, 0.0, 1.0) * silhouetteAA;
         
-        vec3 glowRGB = uColor.rgb * (1.0 + core * uGlowIntensity * 2.5 + mid * uGlowIntensity);
+        vec3 baseColor = mix(uColor.rgb, uGlowColor.rgb, bloom);
+        float alpha = mix(uColor.a, uGlowColor.a, bloom) * edgeAlpha;
+        
+        vec3 glowRGB = baseColor * (1.0 + core * uGlowIntensity * 2.5 + mid * uGlowIntensity);
         FragColor = vec4(glowRGB, alpha);
     } 
     else if (uStyle == 7) { // Outer Glow Shell
@@ -818,9 +821,12 @@ void GpuChamsRenderer::begin_body_pass(const float* view_proj, const float* cam_
     glDepthMask(GL_TRUE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
 }
 
 void GpuChamsRenderer::end_body_pass() {
+    glDisable(GL_CULL_FACE);
     glUseProgram(0);
 }
 
