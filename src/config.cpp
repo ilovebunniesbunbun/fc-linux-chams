@@ -27,6 +27,7 @@ OverlayConfig load_config(const std::string& filename) {
                 {"game_y", 0},
                 {"fps", 0},
                 {"show_fps", true},
+                {"vsync", false},
                 {"extrapolate", false},
                 {"color_visible", {0, 255, 0, 166}},
                 {"color_visible_sec", {255, 255, 0, 204}},
@@ -100,6 +101,7 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("game_y")) cfg.game_y = j["game_y"].get<int>();
         if (j.contains("fps")) cfg.fps = j["fps"].get<int>();
         if (j.contains("show_fps")) cfg.show_fps = j["show_fps"].get<bool>();
+        if (j.contains("vsync")) cfg.vsync = j["vsync"].get<bool>();
         if (j.contains("extrapolate")) cfg.extrapolate = j["extrapolate"].get<bool>();
         if (j.contains("maps_dir")) cfg.maps_dir = j["maps_dir"].get<std::string>();
         if (j.contains("show_invisible")) cfg.show_invisible = j["show_invisible"].get<bool>();
@@ -252,6 +254,7 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"game_y", cfg.game_y},
         {"fps", cfg.fps},
         {"show_fps", cfg.show_fps},
+        {"vsync", cfg.vsync},
         {"extrapolate", cfg.extrapolate},
         {"color_visible", {
             static_cast<int>(cfg.color_vis[0] * 255.0f),

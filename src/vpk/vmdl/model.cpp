@@ -267,7 +267,7 @@ static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out) {
 bool EnsureVpkOpen() {
     if (s_VpkDir.is_open()) return true;
     if (!s_CustomVpkPath.empty() && s_CustomVpkPath != "auto") {
-        if (s_VpkDir.open(s_CustomVpkPath)) return true;
+        return s_VpkDir.open(s_CustomVpkPath);
     }
     for (const auto& Path : vpk::cs2_default_vpk_paths()) {
         if (s_VpkDir.open(Path)) break;

@@ -1,6 +1,7 @@
 #pragma once
 #include <GLFW/glfw3.h>
 #include "config.hpp"
+#include "renderer/esp_renderer.hpp"
 
 class GpuChamsRenderer;
 class ModelCache;
@@ -14,6 +15,7 @@ public:
     void render();
 
     GLFWwindow* get_window() const { return window; }
+    void set_overlay_window(GLFWwindow* w) { overlay_window = w; }
 
 private:
     void init_window();
@@ -30,6 +32,7 @@ private:
     int preview_h = 450;
     GpuChamsRenderer* preview_renderer = nullptr;
     ModelCache* preview_model_cache = nullptr;
+    EspRenderer esp_renderer;
     float preview_rotation = 0.0f; // rotation in degrees
 
     void init_preview();
@@ -37,6 +40,7 @@ private:
     void cleanup_preview();
 
     GLFWwindow* window = nullptr;
+    GLFWwindow* overlay_window = nullptr;
     OverlayConfig& cfg;
     int width = 820;
     int height = 620;

@@ -12,6 +12,7 @@ struct OverlayConfig {
     int game_y = 0;
     int fps = 0;
     bool show_fps = true;
+    bool vsync = false;
     bool extrapolate = false;
     float color_vis[4] = {0.0f, 1.0f, 0.0f, 0.65f};
     float color_vis_sec[4] = {1.0f, 1.0f, 0.0f, 0.8f};

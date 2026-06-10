@@ -18,6 +18,7 @@
 #include "renderer/gpu_chams.hpp"
 #include "renderer/depth_prepass.hpp"
 #include "model_cache.hpp"
+#include "vpk/vmdl/model.hpp"
 #include "vpk/vmdl/maps/map_parser.hpp"
 #include "config.hpp"
 #include "menu_client.hpp"
@@ -370,11 +371,13 @@ struct Vec2 {
 };
 
 #include "esp_drawing.hpp"
+#include "renderer/esp_renderer.hpp"
 
 int main() {
     std::cout << "FC2 CHAMS V2: Launching GPU-Skinned Linux Overlay..." << std::endl;
 
     OverlayConfig cfg = load_config("overlay.json");
+    AgentParser::SetCustomVpkPath(cfg.vpk_path);
     std::cout << "FC2 CHAMS V2: Loaded config: monitor=" << cfg.monitor_w << "x" << cfg.monitor_h
               << " game=" << cfg.game_w << "x" << cfg.game_h
               << " scaling=" << cfg.scaling 
@@ -421,18 +424,16 @@ int main() {
               << " at (" << x << ", " << y << ")" << std::endl;
 
     OverlayClient overlay(width, height, x, y, cfg.hyprland_support);
-
-    // Initialize dynamic OpenGL function pointers
-    if (!load_gl_functions()) {
-        std::cerr << "FC2 CHAMS V2: Failed to load modern OpenGL functions. Ensure OpenGL 3.3 support." << std::endl;
-        return 1;
-    }
     std::cout << "FC2 CHAMS V2: Loaded modern OpenGL core functions." << std::endl;
 
     MenuClient menu(cfg);
+    menu.set_overlay_window(overlay.get_window());
 
     // Make overlay context current again so shaders and buffers are compiled on the overlay window context
     glfwMakeContextCurrent(overlay.get_window());
+
+    // Apply initial VSync setting from config
+    glfwSwapInterval(cfg.vsync ? 1 : 0);
 
     GpuChamsRenderer chams_renderer;
     if (!chams_renderer.init()) {
@@ -443,6 +444,12 @@ int main() {
     DepthPrepassRenderer depth_prepass;
     if (!depth_prepass.init()) {
         std::cerr << "FC2 CHAMS V2: Failed to initialize depth prepass shaders." << std::endl;
+        return 1;
+    }
+
+    EspRenderer esp_renderer;
+    if (!esp_renderer.init()) {
+        std::cerr << "FC2 CHAMS V2: Failed to initialize ESP renderer." << std::endl;
         return 1;
     }
 
@@ -462,23 +469,140 @@ int main() {
     ShmPacket packet;
     std::string current_map = "";
 
-    std::mutex visibility_mutex;
+    struct AsyncMapResult {
+        MapParser::MapMesh mesh;
+        bool bvh_loaded = false;
+        std::vector<LocalMapBVH::Triangle> bvh_triangles;
+    };
+    std::future<AsyncMapResult> map_load_future;
+    bool map_loading = false;
+
+    std::mutex raytrace_mutex;
+    std::condition_variable raytrace_cv;
+    std::atomic<bool> raytrace_running{true};
+    bool raytrace_has_work = false;
+    ShmPacket raytrace_work_packet;
+    std::vector<std::vector<bool>> raytrace_work_bone_masks;
+    std::vector<float> raytrace_pending_vis;
+    std::atomic<bool> raytrace_result_ready{false};
+    std::atomic<bool> raytrace_in_progress{false};
     std::vector<float> global_player_visibility;
-    bool raytrace_in_progress = false;
-    ShmPacket raytrace_packet;
-    std::vector<std::vector<bool>> raytrace_bone_masks;
+
+    std::thread raytrace_thread([&]() {
+        while (raytrace_running) {
+            ShmPacket local_packet;
+            std::vector<std::vector<bool>> local_bone_masks;
+
+            {
+                std::unique_lock<std::mutex> lock(raytrace_mutex);
+                raytrace_cv.wait(lock, [&]() { return raytrace_has_work || !raytrace_running; });
+                if (!raytrace_running) break;
+
+                local_packet = raytrace_work_packet;
+                local_bone_masks = std::move(raytrace_work_bone_masks);
+                raytrace_has_work = false;
+            }
+
+            std::vector<float> local_vis(local_packet.player_count * 128, 0.0f);
+
+            for (int i = 0; i < local_packet.player_count; ++i) {
+                const auto& player = local_packet.players[i];
+                if (!player.active) {
+                    for (int b = 0; b < 128; ++b) {
+                        local_vis[i * 128 + b] = 0.0f;
+                    }
+                    continue;
+                }
+
+                std::shared_lock<std::shared_mutex> bvh_lock(bvh_mutex);
+                Vec3 local_eye = local_packet.local_eye;
+
+                for (int b = 0; b < 128; ++b) {
+                    if (!local_bone_masks[i][b]) {
+                        local_vis[i * 128 + b] = 1.0f;
+                        continue;
+                    }
+
+                    Vec3 target_pos = player.bones[b].position;
+                    Vec3 delta = target_pos - local_eye;
+                    float dist = std::sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+                    if (dist > 12.0f) {
+                        Vec3 dir = delta * (1.0f / dist);
+                        float shrink = std::min(4.0f, dist * 0.04f);
+                        target_pos = target_pos - dir * shrink;
+                    }
+                    TraceResult trace = bvh.trace_ray(local_eye, target_pos);
+                    local_vis[i * 128 + b] = !trace.hit ? 1.0f : 0.0f;
+                }
+
+                // Handle bone fallbacks
+                for (int b = 0; b < 128; ++b) {
+                    if (!local_bone_masks[i][b]) {
+                        local_vis[i * 128 + b] = local_vis[i * 128 + 6]; // Neck default
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(raytrace_mutex);
+                raytrace_pending_vis = std::move(local_vis);
+                raytrace_result_ready = true;
+                raytrace_in_progress = false;
+            }
+        }
+    });
 
     bool first_packet = true;
     auto last_debug_print = std::chrono::steady_clock::now();
     uint32_t packet_count_since_print = 0;
 
+    // Track current GL context to skip redundant context switches
+    GLFWwindow* current_context = nullptr;
+    auto make_context_current = [&current_context](GLFWwindow* target) {
+        if (current_context != target) {
+            glfwMakeContextCurrent(target);
+            current_context = target;
+        }
+    };
+
     while (!overlay.should_close() && !menu.should_close()) {
         auto frame_start = std::chrono::high_resolution_clock::now();
 
         // Ensure the overlay context is current for all uploads and rendering
-        glfwMakeContextCurrent(overlay.get_window());
+        make_context_current(overlay.get_window());
 
         overlay.poll_events();
+
+        // Check if asynchronous map loading has finished
+        if (map_loading && map_load_future.valid() && map_load_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            auto result = map_load_future.get();
+            map_loading = false;
+            if (result.mesh.Valid && !result.mesh.Triangles.empty()) {
+                depth_prepass.upload_geometry(result.mesh.Triangles);
+                std::cout << "FC2 CHAMS V2: Async map geometry loaded (" << result.mesh.Triangles.size() << " triangles)." << std::endl;
+            } else {
+                std::cout << "FC2 CHAMS V2: Async map geometry unavailable, clearing GPU prepass." << std::endl;
+                depth_prepass.clear_geometry();
+            }
+            std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
+            if (result.bvh_loaded) {
+                bvh.triangles = std::move(result.bvh_triangles);
+                bvh.build();
+                std::cout << "FC2 CHAMS V2: Async BVH loaded and built (" << bvh.triangles.size() << " triangles)." << std::endl;
+            } else {
+                std::cerr << "FC2 CHAMS V2: Fallback BVH not found. Using mock shapes." << std::endl;
+                bvh.load_mock_geometry();
+            }
+        }
+
+        // Capture raytrace visibility safely if worker has finished
+        {
+            std::lock_guard<std::mutex> lock(raytrace_mutex);
+            if (raytrace_result_ready) {
+                global_player_visibility = std::move(raytrace_pending_vis);
+                raytrace_result_ready = false;
+            }
+        }
 
         shm.try_frame();
 
@@ -487,6 +611,9 @@ int main() {
         int style_invis_id = get_style_id(cfg.style_invis);
 
         bool has_new_packet = shm.fetch_latest(packet);
+        if (!has_new_packet) {
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
 
         if (has_new_packet) {
             packet_count_since_print++;
@@ -513,28 +640,28 @@ int main() {
                 if (!current_map.empty()) {
                     std::cout << "FC2 CHAMS V2: Map change detected: " << current_map << std::endl;
                     
-                    // 1. Try to load VPK geometry for GPU Depth Prepass
-                    auto load_start = std::chrono::high_resolution_clock::now();
-                    MapParser::MapMesh map_mesh = MapParser::LoadMesh(current_map);
-                    if (map_mesh.Valid && !map_mesh.Triangles.empty()) {
-                        depth_prepass.upload_geometry(map_mesh.Triangles);
-                        auto load_end = std::chrono::high_resolution_clock::now();
-                        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(load_end - load_start).count();
-                        std::cout << "FC2 CHAMS V2: Loaded VPK map geometry (" << map_mesh.Triangles.size() << " triangles) in " << duration << "ms." << std::endl;
-                    } else {
-                        std::cout << "FC2 CHAMS V2: VPK map geometry unavailable, clearing GPU prepass." << std::endl;
-                        depth_prepass.clear_geometry();
+                    // Clear previous map geometries immediately
+                    depth_prepass.clear_geometry();
+                    {
+                        std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
+                        bvh.triangles.clear();
+                        bvh.nodes.clear();
+                        bvh.indices.clear();
                     }
 
-                    // 2. Try to load BVH geometry for fallback raytracer
-                    std::string map_path = cfg.maps_dir + "/" + current_map + ".tri";
-                    std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-                    if (bvh.load_tri_file(map_path)) {
-                        std::cout << "FC2 CHAMS V2: Loaded map fallback BVH (" << bvh.triangles.size() << " triangles)." << std::endl;
-                    } else {
-                        std::cerr << "FC2 CHAMS V2: Fallback BVH not found for " << current_map << ". Using mock shapes." << std::endl;
-                        bvh.load_mock_geometry();
-                    }
+                    map_loading = true;
+                    std::string map_name_copy = current_map;
+                    std::string map_path_copy = cfg.maps_dir + "/" + current_map + ".tri";
+                    map_load_future = std::async(std::launch::async, [map_name_copy, map_path_copy]() {
+                        AsyncMapResult result;
+                        result.mesh = MapParser::LoadMesh(map_name_copy);
+                        LocalMapBVH temp_bvh;
+                        if (temp_bvh.load_tri_file(map_path_copy)) {
+                            result.bvh_loaded = true;
+                            result.bvh_triangles = std::move(temp_bvh.triangles);
+                        }
+                        return result;
+                    });
                 } else {
                     std::cout << "FC2 CHAMS V2: Left map, clearing map geometries." << std::endl;
                     depth_prepass.clear_geometry();
@@ -542,11 +669,13 @@ int main() {
                     bvh.triangles.clear();
                     bvh.nodes.clear();
                     bvh.indices.clear();
+                    map_loading = false;
                 }
             }
 
-            // Raytracing fallback trigger: run only if Depth Prepass lacks loaded geometry
-            bool needs_cpu_raytrace = cfg.use_bvh_fallback && (!cfg.use_depth_prepass || !depth_prepass.has_geometry());
+            // Raytracing fallback trigger: run only if rendering is needed and Depth Prepass lacks loaded geometry
+            bool rendering_needed = cfg.esp_enabled || (style_vis_id > 0) || (style_invis_id > 0 && cfg.show_invisible);
+            bool needs_cpu_raytrace = rendering_needed && cfg.use_bvh_fallback && (!cfg.use_depth_prepass || !depth_prepass.has_geometry());
             if (needs_cpu_raytrace) {
                 // Gather joint masks
                 std::vector<std::vector<bool>> active_bone_masks(packet.player_count, std::vector<bool>(128, false));
@@ -565,73 +694,16 @@ int main() {
                     }
                 }
 
-                // Fire async raytracer thread
-                std::lock_guard<std::mutex> lock(visibility_mutex);
-                if (!raytrace_in_progress) {
-                    raytrace_in_progress = true;
-                    raytrace_packet = packet;
-                    raytrace_bone_masks = std::move(active_bone_masks);
-
-                    std::thread([&bvh, &bvh_mutex, &visibility_mutex, &raytrace_in_progress, &global_player_visibility, &raytrace_packet, &raytrace_bone_masks]() {
-                        ShmPacket local_packet;
-                        std::vector<std::vector<bool>> local_bone_masks;
-                        {
-                            std::lock_guard<std::mutex> lock(visibility_mutex);
-                            local_packet = raytrace_packet;
-                            local_bone_masks = raytrace_bone_masks;
-                        }
-
-                        std::vector<float> local_vis(local_packet.player_count * 128, 0.0f);
-                        std::vector<std::future<void>> futures;
-
-                        for (int i = 0; i < local_packet.player_count; ++i) {
-                            futures.push_back(std::async(std::launch::async, [&bvh, &bvh_mutex, &local_packet, &local_vis, &local_bone_masks, i]() {
-                                const auto& player = local_packet.players[i];
-                                if (!player.active) {
-                                    for (int b = 0; b < 128; ++b) local_vis[i * 128 + b] = 0.0f;
-                                    return;
-                                }
-
-                                std::shared_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-                                Vec3 local_eye = local_packet.local_eye;
-
-                                for (int b = 0; b < 128; ++b) {
-                                    if (!local_bone_masks[i][b]) {
-                                        local_vis[i * 128 + b] = 1.0f;
-                                        continue;
-                                    }
-
-                                    Vec3 target_pos = player.bones[b].position;
-                                    Vec3 delta = target_pos - local_eye;
-                                    float dist = std::sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
-                                    if (dist > 12.0f) {
-                                        Vec3 dir = delta * (1.0f / dist);
-                                        float shrink = std::min(4.0f, dist * 0.04f);
-                                        target_pos = target_pos - dir * shrink;
-                                    }
-                                    TraceResult trace = bvh.trace_ray(local_eye, target_pos);
-                                    local_vis[i * 128 + b] = !trace.hit ? 1.0f : 0.0f;
-                                }
-
-                                // Handle bone fallbacks
-                                for (int b = 0; b < 128; ++b) {
-                                    if (!local_bone_masks[i][b]) {
-                                        local_vis[i * 128 + b] = local_vis[i * 128 + 6]; // Neck default
-                                    }
-                                }
-                            }));
-                        }
-
-                        for (auto& f : futures) {
-                            f.get();
-                        }
-
-                        {
-                            std::lock_guard<std::mutex> lock(visibility_mutex);
-                            global_player_visibility = std::move(local_vis);
-                            raytrace_in_progress = false;
-                        }
-                    }).detach();
+                // Push work to the persistent raytrace thread
+                {
+                    std::lock_guard<std::mutex> lock(raytrace_mutex);
+                    if (!raytrace_in_progress) {
+                        raytrace_work_packet = packet;
+                        raytrace_work_bone_masks = std::move(active_bone_masks);
+                        raytrace_has_work = true;
+                        raytrace_in_progress = true;
+                        raytrace_cv.notify_one();
+                    }
                 }
             }
         }
@@ -687,7 +759,7 @@ int main() {
         // Capture raytrace visibility safely
         std::vector<float> rendering_vis;
         {
-            std::lock_guard<std::mutex> lock(visibility_mutex);
+            std::lock_guard<std::mutex> lock(raytrace_mutex);
             rendering_vis = global_player_visibility;
         }
 
@@ -790,18 +862,11 @@ int main() {
             }
 
             if (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow) {
-                glUseProgram(0);
-                glDisable(GL_TEXTURE_2D);
-
                 GLenum drawBuffer = GL_COLOR_ATTACHMENT0;
                 glDrawBuffers(1, &drawBuffer);
 
-                glMatrixMode(GL_PROJECTION);
-                glPushMatrix();
-                glLoadMatrixf(gl_vp);
-                glMatrixMode(GL_MODELVIEW);
-                glPushMatrix();
-                glLoadIdentity();
+                esp_renderer.clear();
+                esp_renderer.set_projection(gl_vp);
 
                 float pulse_factor = 1.0f;
                 if (cfg.esp_skeleton_glow_pulse) {
@@ -826,13 +891,10 @@ int main() {
                         glow_color_ptr = custom_glow_color;
                     }
 
-                    draw_skeleton(rp.sanitized_bones, i, rendering_vis, gl_vp, cfg, has_prepass, true, pulse_factor, glow_color_ptr);
+                    esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, rendering_vis, cfg, true, pulse_factor, glow_color_ptr);
                 }
 
-                glMatrixMode(GL_PROJECTION);
-                glPopMatrix();
-                glMatrixMode(GL_MODELVIEW);
-                glPopMatrix();
+                esp_renderer.flush_lines();
 
                 GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
                 glDrawBuffers(2, drawBuffers);
@@ -854,11 +916,33 @@ int main() {
         // 1. Draw 3D Skeleton (drawn before body pass so it is underneath semi-transparent chams,
         // allowing chams to write depth correctly without occluding the skeleton)
         if (cfg.esp_enabled && cfg.esp_skeleton) {
+            esp_renderer.clear();
+            esp_renderer.set_projection(gl_vp);
+
             for (int i = 0; i < packet.player_count; ++i) {
                 const auto& rp = render_palettes[i];
                 if (!rp.model) continue;
 
-                draw_skeleton(rp.sanitized_bones, i, rendering_vis, gl_vp, cfg, has_prepass, false, 1.0f);
+                esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, rendering_vis, cfg, false, 1.0f, nullptr);
+            }
+
+            if (has_prepass) {
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(GL_FALSE);
+
+                // Pass 1: Hidden
+                glDepthFunc(GL_GREATER);
+                esp_renderer.flush_lines_override(cfg.esp_skeleton_color_invis);
+
+                // Pass 2: Visible
+                glDepthFunc(GL_LEQUAL);
+                esp_renderer.flush_lines_override(cfg.esp_skeleton_color_vis);
+
+                glDepthMask(GL_TRUE);
+                glDepthFunc(GL_LEQUAL);
+            } else {
+                glDisable(GL_DEPTH_TEST);
+                esp_renderer.flush_lines();
             }
         }
 
@@ -926,14 +1010,9 @@ int main() {
             // 2. Draw 2D Box & Health Bar
             if (cfg.esp_box || cfg.esp_health_bar) {
                 glDisable(GL_DEPTH_TEST);
-                glUseProgram(0);
-                glMatrixMode(GL_PROJECTION);
-                glPushMatrix();
-                glLoadIdentity();
-                glOrtho(0, width, height, 0, -10.0, 10.0);
-                glMatrixMode(GL_MODELVIEW);
-                glPushMatrix();
-                glLoadIdentity();
+                esp_renderer.clear();
+                esp_renderer.set_ortho(0, width, height, 0);
+
                 for (int i = 0; i < packet.player_count; ++i) {
                     const auto& rp = render_palettes[i];
                     if (!rp.model) {
@@ -966,20 +1045,18 @@ int main() {
 
                         // Draw bounding box
                         if (cfg.esp_box) {
-                            draw_outlined_rect(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
+                            esp_renderer.add_outlined_rect_2d(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
                         }
 
                         // Draw health bar
                         if (cfg.esp_health_bar) {
-                            draw_health_bar(bx, by, bw, bh, smoothed_health[i], cfg);
+                            esp_renderer.add_health_bar_2d(bx, by, bw, bh, smoothed_health[i], cfg);
                         }
                     }
                 }
 
-                glMatrixMode(GL_PROJECTION);
-                glPopMatrix();
-                glMatrixMode(GL_MODELVIEW);
-                glPopMatrix();
+                esp_renderer.flush_triangles();
+                esp_renderer.flush_lines();
                 glEnable(GL_DEPTH_TEST);
             }
         }
@@ -1002,8 +1079,15 @@ int main() {
 
         overlay.end_frame();
 
-        // Render the ImGui settings menu window
-        menu.render();
+        // Render the ImGui settings menu window (throttled to ~60 FPS)
+        static auto last_menu_render = std::chrono::steady_clock::now();
+        auto now_menu = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now_menu - last_menu_render).count() >= 16) {
+            menu.render();
+            // After menu.render() switches to the menu context, invalidate our tracker
+            current_context = menu.get_window();
+            last_menu_render = now_menu;
+        }
 
         // High-precision pacing limiter
         if (cfg.fps > 0) {
@@ -1024,6 +1108,15 @@ int main() {
             }
         }
     }
+
+    // Cleanly terminate persistent raytrace thread
+    raytrace_running = false;
+    raytrace_cv.notify_one();
+    if (raytrace_thread.joinable()) {
+        raytrace_thread.join();
+    }
+
+    esp_renderer.cleanup();
 
     shm.shutdown();
     std::cout << "FC2 CHAMS V2: Terminated cleanly." << std::endl;

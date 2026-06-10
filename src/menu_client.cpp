@@ -1,4 +1,5 @@
 #include "menu_client.hpp"
+#include <GLFW/glfw3.h>
 #include "external/imgui/imgui.h"
 #include "external/imgui/imgui_impl_glfw.h"
 #include "external/imgui/imgui_impl_opengl3.h"
@@ -118,7 +119,10 @@ void MenuClient::apply_dark_theme() {
 }
 
 void MenuClient::render() {
-    glfwMakeContextCurrent(window);
+    // Track current GL context to skip redundant context switches
+    if (glfwGetCurrentContext() != window) {
+        glfwMakeContextCurrent(window);
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -409,6 +413,17 @@ void MenuClient::render_ui() {
             ImGui::SetItemTooltip("0 means unlimited. The overlay uses a high-precision sleeper to match the rate.");
             
             ImGui::Checkbox("Show FPS Counter", &cfg.show_fps);
+
+            bool prev_vsync = cfg.vsync;
+            ImGui::Checkbox("Enable VSync", &cfg.vsync);
+            ImGui::SetItemTooltip("Synchronizes the overlay's swap interval to the monitor refresh rate.\nReduces tearing but may cap FPS. Overrides Target FPS when enabled.");
+            if (cfg.vsync != prev_vsync && overlay_window) {
+                // Apply VSync change on the overlay window context
+                glfwMakeContextCurrent(overlay_window);
+                glfwSwapInterval(cfg.vsync ? 1 : 0);
+                glfwMakeContextCurrent(window);
+            }
+
             ImGui::Checkbox("Extrapolate View Matrix", &cfg.extrapolate);
             ImGui::SetItemTooltip("Performs linear extrapolation of game view projection matrix to smooth chams tracking.");
             
@@ -616,6 +631,10 @@ void MenuClient::init_preview() {
 
     preview_model_cache = new ModelCache();
 
+    if (!esp_renderer.init()) {
+        std::cerr << "MENU_CLIENT: Failed to initialize preview ESP renderer" << std::endl;
+    }
+
     preview_initialized = true;
 }
 
@@ -644,6 +663,8 @@ void MenuClient::cleanup_preview() {
         delete preview_model_cache;
         preview_model_cache = nullptr;
     }
+
+    esp_renderer.cleanup();
 
     preview_initialized = false;
 }
@@ -734,18 +755,11 @@ void MenuClient::render_preview() {
         }
 
         if (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow) {
-            glUseProgram(0);
-            glDisable(GL_TEXTURE_2D);
-
             GLenum drawBuffer = GL_COLOR_ATTACHMENT0;
             glDrawBuffers(1, &drawBuffer);
 
-            glMatrixMode(GL_PROJECTION);
-            glPushMatrix();
-            glLoadMatrixf(gl_vp);
-            glMatrixMode(GL_MODELVIEW);
-            glPushMatrix();
-            glLoadIdentity();
+            esp_renderer.clear();
+            esp_renderer.set_projection(gl_vp);
 
             float override_glow_color[4] = { 0.0f };
             if (cfg.esp_skeleton_glow_health_based) {
@@ -764,12 +778,8 @@ void MenuClient::render_preview() {
                 pulse_factor = 0.625f + 0.375f * std::sin(time * cfg.esp_skeleton_glow_pulse_speed);
             }
 
-            draw_skeleton(preview_bones, 0, dummy_vis, gl_vp, cfg, false, true, pulse_factor, override_glow_color);
-
-            glMatrixMode(GL_PROJECTION);
-            glPopMatrix();
-            glMatrixMode(GL_MODELVIEW);
-            glPopMatrix();
+            esp_renderer.add_skeleton_3d(preview_bones, 0, dummy_vis, cfg, true, pulse_factor, override_glow_color);
+            esp_renderer.flush_lines();
 
             GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
             glDrawBuffers(2, drawBuffers);
@@ -816,20 +826,17 @@ void MenuClient::render_preview() {
 
     // 3. Draw 3D Skeleton
     if (cfg.esp_enabled && cfg.esp_skeleton) {
-        draw_skeleton(preview_bones, 0, dummy_vis, gl_vp, cfg, false, false, 1.0f);
+        esp_renderer.clear();
+        esp_renderer.set_projection(gl_vp);
+        esp_renderer.add_skeleton_3d(preview_bones, 0, dummy_vis, cfg, false, 1.0f, nullptr);
+        esp_renderer.flush_lines();
     }
 
     // 4. Draw 2D Box & Health Bar
     if (cfg.esp_enabled && (cfg.esp_box || cfg.esp_health_bar)) {
         glDisable(GL_DEPTH_TEST);
-        glUseProgram(0);
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix();
-        glLoadIdentity();
-        glOrtho(0, preview_w, preview_h, 0, -10.0, 10.0);
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix();
-        glLoadIdentity();
+        esp_renderer.clear();
+        esp_renderer.set_ortho(0, preview_w, preview_h, 0);
 
         float bx, by, bw, bh;
         Vec3 origin = { 0.0f, 0.0f, 0.0f };
@@ -837,17 +844,15 @@ void MenuClient::render_preview() {
 
         if (get_player_bounds(preview_bones, origin, cam_pos_vec, row_major_vp, preview_w, preview_h, bx, by, bw, bh, cfg)) {
             if (cfg.esp_box) {
-                draw_outlined_rect(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
+                esp_renderer.add_outlined_rect_2d(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
             }
             if (cfg.esp_health_bar) {
-                draw_health_bar(bx, by, bw, bh, 100.0f, cfg); // Rendered at 100% health in preview
+                esp_renderer.add_health_bar_2d(bx, by, bw, bh, 100.0f, cfg); // Rendered at 100% health in preview
             }
         }
 
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
-        glPopMatrix();
+        esp_renderer.flush_triangles();
+        esp_renderer.flush_lines();
         glEnable(GL_DEPTH_TEST);
     }
 

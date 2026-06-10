@@ -37,3 +37,9 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated / Testing files
+pak01_dir.vpk
+.pytest_cache/
+__pycache__/
+.agents/

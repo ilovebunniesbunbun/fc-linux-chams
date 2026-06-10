@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <cstdint>
 #include <cstring>
+#include <time.h>
+#include <semaphore.h>
 
 struct Vec3 {
     float x, y, z;

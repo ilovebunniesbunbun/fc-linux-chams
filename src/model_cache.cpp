@@ -187,7 +187,7 @@ const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
         entry.valid = true;
         std::cout << "MODEL_CACHE: Loaded model successfully. Vertices: " << entry.mesh.vertices.size() << " Indices: " << entry.index_count << std::endl;
     } else {
-        std::cerr << "MODEL_CACHE: Failed to load model: " << model_name << std::endl;
+        std::cout << "MODEL_CACHE: Failed to load model: " << model_name << std::endl;
         entry.valid = false;
     }
 
