@@ -42,8 +42,8 @@ def make_vbib_block():
     # Vertex data: 3 vertices
     # pos (12), norm (12), uv (8)
     v0 = struct.pack("<ffffffff", 0.0, 0.0, 0.0,  0.0, 0.0, 1.0,  0.0, 0.0)
-    v1 = struct.pack("<ffffffff", 1.0, 0.0, 0.0,  0.0, 0.0, 1.0,  1.0, 0.0)
-    v2 = struct.pack("<ffffffff", 0.0, 1.0, 0.0,  0.0, 0.0, 1.0,  0.0, 1.0)
+    v1 = struct.pack("<ffffffff", 50.0, 0.0, 0.0,  0.0, 0.0, 1.0,  1.0, 0.0)
+    v2 = struct.pack("<ffffffff", 0.0, 50.0, 0.0,  0.0, 0.0, 1.0,  0.0, 1.0)
     vb_data = v0 + v1 + v2
     
     vb_header = struct.pack("<III", vertex_count, vertex_size, attr_count)

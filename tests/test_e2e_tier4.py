@@ -16,7 +16,6 @@ def test_tier4_game_session_simulation(run_fc2_chams, config_manager, mock_bridg
         "vpk_path": vpk_path,
         "fps": 60,
         "use_depth_prepass": False,
-        "use_bvh_fallback": True,
         "maps_dir": "."
     }
     with open(config_manager, "w") as f:

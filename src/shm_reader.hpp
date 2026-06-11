@@ -1,12 +1,14 @@
 #pragma once
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <cstdlib>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstdint>
 #include <cstring>
 #include <time.h>
 #include <semaphore.h>
+#include <cstddef>
 
 struct Vec3 {
     float x, y, z;
@@ -58,6 +60,11 @@ private:
 
 public:
     bool initialize() {
+        const char* env_shm = std::getenv("FC2_SHM_NAME");
+        const char* env_sem = std::getenv("FC2_SEM_NAME");
+        if (env_shm) shm_name = env_shm;
+        if (env_sem) sem_name = env_sem;
+
         shm_size = sizeof(ShmPacket);
         shm_fd = shm_open(shm_name, O_RDONLY, 0666);
         if (shm_fd < 0) {
@@ -123,7 +130,13 @@ public:
                 return false;
             }
             
-            std::memcpy(&out_packet, mapped_data, sizeof(ShmPacket));
+            std::memcpy(&out_packet, mapped_data, offsetof(ShmPacket, players));
+            int copy_count = out_packet.player_count;
+            if (copy_count < 0) copy_count = 0;
+            if (copy_count > 64) copy_count = 64;
+            if (copy_count > 0) {
+                std::memcpy(out_packet.players, mapped_data->players, copy_count * sizeof(PlayerData));
+            }
             
             uint32_t seq2 = mapped_data->frame_index;
             if (seq1 == seq2) {

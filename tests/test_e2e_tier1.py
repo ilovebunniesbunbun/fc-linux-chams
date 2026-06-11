@@ -28,7 +28,6 @@ def test_tier1_overlay_initialization(run_fc2_chams, config_manager, mock_bridge
         "hyprland_support": False,
         "vpk_path": vpk_path,
         "use_depth_prepass": False,
-        "use_bvh_fallback": True,
         "maps_dir": "."
     }
     

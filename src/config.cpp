@@ -41,6 +41,7 @@ OverlayConfig load_config(const std::string& filename) {
                 {"chams_style_hidden", "flat"},
                 {"use_depth_prepass", true},
                 {"use_bvh_fallback", true},
+                {"flat_chams_no_overlap", false},
                 {"glow_enabled", false},
                 {"glow_health_based", false},
                 {"glow_health_start", {0, 255, 0, 204}},
@@ -133,6 +134,7 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("chams_style_hidden")) cfg.style_invis = j["chams_style_hidden"].get<std::string>();
         if (j.contains("use_depth_prepass")) cfg.use_depth_prepass = j["use_depth_prepass"].get<bool>();
         if (j.contains("use_bvh_fallback")) cfg.use_bvh_fallback = j["use_bvh_fallback"].get<bool>();
+        if (j.contains("flat_chams_no_overlap")) cfg.flat_chams_no_overlap = j["flat_chams_no_overlap"].get<bool>();
         if (j.contains("debug_bridge")) cfg.debug_bridge = j["debug_bridge"].get<bool>();
 
         if (j.contains("glow_enabled")) cfg.glow_enabled = j["glow_enabled"].get<bool>();
@@ -288,6 +290,7 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"chams_style_hidden", cfg.style_invis},
         {"use_depth_prepass", cfg.use_depth_prepass},
         {"use_bvh_fallback", cfg.use_bvh_fallback},
+        {"flat_chams_no_overlap", cfg.flat_chams_no_overlap},
         {"glow_enabled", cfg.glow_enabled},
         {"glow_health_based", cfg.glow_health_based},
         {"glow_thickness", cfg.glow_thickness},

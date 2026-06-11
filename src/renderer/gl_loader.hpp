@@ -23,6 +23,13 @@
 #define GL_READ_FRAMEBUFFER               0x8CA8
 #define GL_DRAW_FRAMEBUFFER               0x8CA9
 
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER                 0x8A11
+#endif
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW                   0x88E8
+#endif
+
 typedef ptrdiff_t GLsizeiptr;
 typedef char GLchar;
 
@@ -54,6 +61,7 @@ typedef void (APIENTRY * PFNGLDELETEPROGRAMPROC) (GLuint program);
 
 typedef GLint (APIENTRY * PFNGLGETUNIFORMLOCATIONPROC) (GLuint program, const GLchar *name);
 typedef void (APIENTRY * PFNGLUNIFORM1IPROC) (GLint location, GLint v0);
+typedef void (APIENTRY * PFNGLUNIFORM1IVPROC) (GLint location, GLsizei count, const GLint *value);
 typedef void (APIENTRY * PFNGLUNIFORM1FPROC) (GLint location, GLfloat v0);
 typedef void (APIENTRY * PFNGLUNIFORM2FPROC) (GLint location, GLfloat v0, GLfloat v1);
 typedef void (APIENTRY * PFNGLUNIFORM3FVPROC) (GLint location, GLsizei count, const GLfloat *value);
@@ -74,6 +82,13 @@ typedef void (APIENTRY * PFNGLBLITFRAMEBUFFERPROC) (GLint srcX0, GLint srcY0, GL
 typedef void (APIENTRY * PFNGLDELETEFRAMEBUFFERSPROC) (GLsizei n, const GLuint *framebuffers);
 typedef void (APIENTRY * PFNGLDELETERENDERBUFFERSPROC) (GLsizei n, const GLuint *renderbuffers);
 typedef void (APIENTRY * PFNGLDRAWBUFFERSPROC) (GLsizei n, const GLenum *bufs);
+
+typedef void (APIENTRY * PFNGLDRAWELEMENTSINSTANCEDPROC) (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei primcount);
+
+typedef GLuint (APIENTRY * PFNGLGETUNIFORMBLOCKINDEXPROC) (GLuint program, const GLchar *uniformBlockName);
+typedef void (APIENTRY * PFNGLUNIFORMBLOCKBINDINGPROC) (GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
+typedef void (APIENTRY * PFNGLBUFFERSUBDATAPROC) (GLenum target, ptrdiff_t offset, GLsizeiptr size, const void *data);
+typedef void (APIENTRY * PFNGLBINDBUFFERRANGEPROC) (GLenum target, GLuint index, GLuint buffer, ptrdiff_t offset, GLsizeiptr size);
 
 // Inline function pointers
 inline PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
@@ -103,6 +118,7 @@ inline PFNGLDELETEPROGRAMPROC glDeleteProgram = nullptr;
 
 inline PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation = nullptr;
 inline PFNGLUNIFORM1IPROC glUniform1i = nullptr;
+inline PFNGLUNIFORM1IVPROC glUniform1iv = nullptr;
 inline PFNGLUNIFORM1FPROC glUniform1f = nullptr;
 inline PFNGLUNIFORM2FPROC glUniform2f = nullptr;
 inline PFNGLUNIFORM3FVPROC glUniform3fv = nullptr;
@@ -123,6 +139,13 @@ inline PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = nullptr;
 inline PFNGLDELETEFRAMEBUFFERSPROC glDeleteFramebuffers = nullptr;
 inline PFNGLDELETERENDERBUFFERSPROC glDeleteRenderbuffers = nullptr;
 inline PFNGLDRAWBUFFERSPROC glDrawBuffers = nullptr;
+
+inline PFNGLDRAWELEMENTSINSTANCEDPROC glDrawElementsInstanced = nullptr;
+
+inline PFNGLGETUNIFORMBLOCKINDEXPROC glGetUniformBlockIndex = nullptr;
+inline PFNGLUNIFORMBLOCKBINDINGPROC glUniformBlockBinding = nullptr;
+inline PFNGLBUFFERSUBDATAPROC glBufferSubData = nullptr;
+inline PFNGLBINDBUFFERRANGEPROC glBindBufferRange = nullptr;
 
 inline bool load_gl_functions() {
     auto get_proc = [](const char* name) -> void* {
@@ -160,6 +183,7 @@ inline bool load_gl_functions() {
 
     glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)get_proc("glGetUniformLocation");
     glUniform1i = (PFNGLUNIFORM1IPROC)get_proc("glUniform1i");
+    glUniform1iv = (PFNGLUNIFORM1IVPROC)get_proc("glUniform1iv");
     glUniform1f = (PFNGLUNIFORM1FPROC)get_proc("glUniform1f");
     glUniform2f = (PFNGLUNIFORM2FPROC)get_proc("glUniform2f");
     glUniform3fv = (PFNGLUNIFORM3FVPROC)get_proc("glUniform3fv");
@@ -181,7 +205,14 @@ inline bool load_gl_functions() {
     glDeleteRenderbuffers = (PFNGLDELETERENDERBUFFERSPROC)get_proc("glDeleteRenderbuffers");
     glDrawBuffers = (PFNGLDRAWBUFFERSPROC)get_proc("glDrawBuffers");
 
+    glGetUniformBlockIndex = (PFNGLGETUNIFORMBLOCKINDEXPROC)get_proc("glGetUniformBlockIndex");
+    glUniformBlockBinding = (PFNGLUNIFORMBLOCKBINDINGPROC)get_proc("glUniformBlockBinding");
+    glBufferSubData = (PFNGLBUFFERSUBDATAPROC)get_proc("glBufferSubData");
+    glBindBufferRange = (PFNGLBINDBUFFERRANGEPROC)get_proc("glBindBufferRange");
+    glDrawElementsInstanced = (PFNGLDRAWELEMENTSINSTANCEDPROC)get_proc("glDrawElementsInstanced");
+
     return glGenVertexArrays && glBindVertexArray && glGenBuffers && glBindBuffer && glBufferData &&
            glCreateShader && glShaderSource && glCompileShader && glCreateProgram && glLinkProgram && glUseProgram &&
-           glDrawBuffers;
+           glDrawBuffers && glGetUniformBlockIndex && glUniformBlockBinding && glBufferSubData && glBindBufferRange &&
+           glDrawElementsInstanced;
 }

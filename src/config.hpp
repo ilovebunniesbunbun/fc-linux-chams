@@ -28,6 +28,7 @@ struct OverlayConfig {
     std::string style_invis = "flat";
     bool use_depth_prepass = true;
     bool use_bvh_fallback = true;
+    bool flat_chams_no_overlap = false;
 
     // Glow shader options
     bool glow_enabled = false;

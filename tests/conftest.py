@@ -60,8 +60,8 @@ class MockBridge:
     """
     def __init__(self):
         self.shm_size = ctypes.sizeof(ShmPacket)
-        self.shm_path = "/dev/shm/fc2_chams_shm_bridge"
-        self.sem_name = b"/fc2_chams_shm_sem"
+        self.shm_path = "/dev/shm/fc2_chams_shm_bridge_test"
+        self.sem_name = b"/fc2_chams_shm_sem_test"
         
         # Clean up old shm if any
         if os.path.exists(self.shm_path):
@@ -223,6 +223,8 @@ def run_fc2_chams():
             cmd = ["xvfb-run", "--server-args=-screen 0 1280x1024x24"] + cmd
             
         run_env = os.environ.copy()
+        run_env["FC2_SHM_NAME"] = "/fc2_chams_shm_bridge_test"
+        run_env["FC2_SEM_NAME"] = "/fc2_chams_shm_sem_test"
         if env:
             run_env.update(env)
             

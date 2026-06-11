@@ -12,7 +12,6 @@
 #include <nlohmann/json.hpp>
 
 #include "shm_reader.hpp"
-#include "vischeck/bvh_parser.hpp"
 #include "overlay_client.hpp"
 #include "renderer/gl_loader.hpp"
 #include "renderer/gpu_chams.hpp"
@@ -461,100 +460,23 @@ int main() {
         return 1;
     }
 
-    // Fallback BVH Raytracer
-    LocalMapBVH bvh;
-    std::shared_mutex bvh_mutex;
-    bvh.load_mock_geometry();
-
     ShmPacket packet;
     std::string current_map = "";
 
     struct AsyncMapResult {
         MapParser::MapMesh mesh;
-        bool bvh_loaded = false;
-        std::vector<LocalMapBVH::Triangle> bvh_triangles;
     };
     std::future<AsyncMapResult> map_load_future;
     bool map_loading = false;
 
-    std::mutex raytrace_mutex;
-    std::condition_variable raytrace_cv;
-    std::atomic<bool> raytrace_running{true};
-    bool raytrace_has_work = false;
-    ShmPacket raytrace_work_packet;
-    std::vector<std::vector<bool>> raytrace_work_bone_masks;
-    std::vector<float> raytrace_pending_vis;
-    std::atomic<bool> raytrace_result_ready{false};
-    std::atomic<bool> raytrace_in_progress{false};
-    std::vector<float> global_player_visibility;
-
-    std::thread raytrace_thread([&]() {
-        while (raytrace_running) {
-            ShmPacket local_packet;
-            std::vector<std::vector<bool>> local_bone_masks;
-
-            {
-                std::unique_lock<std::mutex> lock(raytrace_mutex);
-                raytrace_cv.wait(lock, [&]() { return raytrace_has_work || !raytrace_running; });
-                if (!raytrace_running) break;
-
-                local_packet = raytrace_work_packet;
-                local_bone_masks = std::move(raytrace_work_bone_masks);
-                raytrace_has_work = false;
-            }
-
-            std::vector<float> local_vis(local_packet.player_count * 128, 0.0f);
-
-            for (int i = 0; i < local_packet.player_count; ++i) {
-                const auto& player = local_packet.players[i];
-                if (!player.active) {
-                    for (int b = 0; b < 128; ++b) {
-                        local_vis[i * 128 + b] = 0.0f;
-                    }
-                    continue;
-                }
-
-                std::shared_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-                Vec3 local_eye = local_packet.local_eye;
-
-                for (int b = 0; b < 128; ++b) {
-                    if (!local_bone_masks[i][b]) {
-                        local_vis[i * 128 + b] = 1.0f;
-                        continue;
-                    }
-
-                    Vec3 target_pos = player.bones[b].position;
-                    Vec3 delta = target_pos - local_eye;
-                    float dist = std::sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
-                    if (dist > 12.0f) {
-                        Vec3 dir = delta * (1.0f / dist);
-                        float shrink = std::min(4.0f, dist * 0.04f);
-                        target_pos = target_pos - dir * shrink;
-                    }
-                    TraceResult trace = bvh.trace_ray(local_eye, target_pos);
-                    local_vis[i * 128 + b] = !trace.hit ? 1.0f : 0.0f;
-                }
-
-                // Handle bone fallbacks
-                for (int b = 0; b < 128; ++b) {
-                    if (!local_bone_masks[i][b]) {
-                        local_vis[i * 128 + b] = local_vis[i * 128 + 6]; // Neck default
-                    }
-                }
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(raytrace_mutex);
-                raytrace_pending_vis = std::move(local_vis);
-                raytrace_result_ready = true;
-                raytrace_in_progress = false;
-            }
-        }
-    });
-
     bool first_packet = true;
     auto last_debug_print = std::chrono::steady_clock::now();
     uint32_t packet_count_since_print = 0;
+
+    double total_ipc_time_ms = 0.0;
+    double total_cpu_time_ms = 0.0;
+    double total_gpu_time_ms = 0.0;
+    uint32_t metrics_count = 0;
 
     // Track current GL context to skip redundant context switches
     GLFWwindow* current_context = nullptr;
@@ -584,24 +506,6 @@ int main() {
                 std::cout << "FC2 CHAMS V2: Async map geometry unavailable, clearing GPU prepass." << std::endl;
                 depth_prepass.clear_geometry();
             }
-            std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-            if (result.bvh_loaded) {
-                bvh.triangles = std::move(result.bvh_triangles);
-                bvh.build();
-                std::cout << "FC2 CHAMS V2: Async BVH loaded and built (" << bvh.triangles.size() << " triangles)." << std::endl;
-            } else {
-                std::cerr << "FC2 CHAMS V2: Fallback BVH not found. Using mock shapes." << std::endl;
-                bvh.load_mock_geometry();
-            }
-        }
-
-        // Capture raytrace visibility safely if worker has finished
-        {
-            std::lock_guard<std::mutex> lock(raytrace_mutex);
-            if (raytrace_result_ready) {
-                global_player_visibility = std::move(raytrace_pending_vis);
-                raytrace_result_ready = false;
-            }
         }
 
         shm.try_frame();
@@ -610,7 +514,11 @@ int main() {
         int style_vis_id = get_style_id(cfg.style_vis);
         int style_invis_id = get_style_id(cfg.style_invis);
 
+        auto ipc_start = std::chrono::high_resolution_clock::now();
         bool has_new_packet = shm.fetch_latest(packet);
+        auto ipc_end = std::chrono::high_resolution_clock::now();
+        double current_ipc_ms = std::chrono::duration<double, std::milli>(ipc_end - ipc_start).count();
+
         if (!has_new_packet) {
             std::this_thread::sleep_for(std::chrono::microseconds(500));
         }
@@ -625,12 +533,26 @@ int main() {
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - last_debug_print).count() >= 5) {
                 if (cfg.debug_bridge) {
+                    double avg_ipc = metrics_count > 0 ? total_ipc_time_ms / metrics_count : 0.0;
+                    double avg_cpu = metrics_count > 0 ? total_cpu_time_ms / metrics_count : 0.0;
+                    double avg_gpu = metrics_count > 0 ? total_gpu_time_ms / metrics_count : 0.0;
+                    double avg_total = avg_ipc + avg_cpu + avg_gpu;
+
                     std::cout << "FC2 CHAMS V2: Bridge active - received " << packet_count_since_print 
                               << " packets in last 5s (frame index: " << packet.frame_index 
                               << ", players tracked: " << packet.player_count << ")" << std::endl;
+                    std::cout << "            Avg Timeline (frame processing latency):" << std::endl;
+                    std::cout << "            - IPC Read Time:   " << avg_ipc << " ms" << std::endl;
+                    std::cout << "            - CPU Math Time:   " << avg_cpu << " ms" << std::endl;
+                    std::cout << "            - GPU Render Time: " << avg_gpu << " ms" << std::endl;
+                    std::cout << "            - Total Pipeline:  " << avg_total << " ms" << std::endl;
                 }
                 last_debug_print = now;
                 packet_count_since_print = 0;
+                total_ipc_time_ms = 0.0;
+                total_cpu_time_ms = 0.0;
+                total_gpu_time_ms = 0.0;
+                metrics_count = 0;
             }
 
             // Map change handling
@@ -642,68 +564,18 @@ int main() {
                     
                     // Clear previous map geometries immediately
                     depth_prepass.clear_geometry();
-                    {
-                        std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-                        bvh.triangles.clear();
-                        bvh.nodes.clear();
-                        bvh.indices.clear();
-                    }
 
                     map_loading = true;
                     std::string map_name_copy = current_map;
-                    std::string map_path_copy = cfg.maps_dir + "/" + current_map + ".tri";
-                    map_load_future = std::async(std::launch::async, [map_name_copy, map_path_copy]() {
+                    map_load_future = std::async(std::launch::async, [map_name_copy]() {
                         AsyncMapResult result;
                         result.mesh = MapParser::LoadMesh(map_name_copy);
-                        LocalMapBVH temp_bvh;
-                        if (temp_bvh.load_tri_file(map_path_copy)) {
-                            result.bvh_loaded = true;
-                            result.bvh_triangles = std::move(temp_bvh.triangles);
-                        }
                         return result;
                     });
                 } else {
                     std::cout << "FC2 CHAMS V2: Left map, clearing map geometries." << std::endl;
                     depth_prepass.clear_geometry();
-                    std::unique_lock<std::shared_mutex> bvh_lock(bvh_mutex);
-                    bvh.triangles.clear();
-                    bvh.nodes.clear();
-                    bvh.indices.clear();
                     map_loading = false;
-                }
-            }
-
-            // Raytracing fallback trigger: run only if rendering is needed and Depth Prepass lacks loaded geometry
-            bool rendering_needed = cfg.esp_enabled || (style_vis_id > 0) || (style_invis_id > 0 && cfg.show_invisible);
-            bool needs_cpu_raytrace = rendering_needed && cfg.use_bvh_fallback && (!cfg.use_depth_prepass || !depth_prepass.has_geometry());
-            if (needs_cpu_raytrace) {
-                // Gather joint masks
-                std::vector<std::vector<bool>> active_bone_masks(packet.player_count, std::vector<bool>(128, false));
-                for (int i = 0; i < packet.player_count; ++i) {
-                    const auto& player = packet.players[i];
-                    if (player.active) {
-                        const auto* cache_model = model_cache.get_or_load(player.model_name);
-                        if (cache_model && cache_model->valid) {
-                            // Only trace active joints to optimize CPU usage
-                            for (size_t j = 0; j < cache_model->mesh.inv_bind_poses.size() && j < 128; ++j) {
-                                active_bone_masks[i][j] = true;
-                            }
-                        } else {
-                            std::fill(active_bone_masks[i].begin(), active_bone_masks[i].end(), true);
-                        }
-                    }
-                }
-
-                // Push work to the persistent raytrace thread
-                {
-                    std::lock_guard<std::mutex> lock(raytrace_mutex);
-                    if (!raytrace_in_progress) {
-                        raytrace_work_packet = packet;
-                        raytrace_work_bone_masks = std::move(active_bone_masks);
-                        raytrace_has_work = true;
-                        raytrace_in_progress = true;
-                        raytrace_cv.notify_one();
-                    }
                 }
             }
         }
@@ -747,6 +619,44 @@ int main() {
         Vec3 cam_pos = get_camera_position(render_view_matrix);
         float cam_pos_arr[3] = { cam_pos.x, cam_pos.y, cam_pos.z };
 
+        // Detailed debug logging throttled to 5 seconds
+        static auto last_detail_print = std::chrono::steady_clock::now();
+        auto now_detail = std::chrono::steady_clock::now();
+        if (cfg.debug_bridge && std::chrono::duration_cast<std::chrono::seconds>(now_detail - last_detail_print).count() >= 5) {
+            last_detail_print = now_detail;
+            std::cout << "[DEBUG LOG] Window Size: " << width << "x" << height << std::endl;
+            std::cout << "[DEBUG LOG] Camera Pos: (" << cam_pos.x << ", " << cam_pos.y << ", " << cam_pos.z << ")" << std::endl;
+            std::cout << "[DEBUG LOG] ViewProj Matrix: ";
+            for (int i = 0; i < 16; ++i) std::cout << render_view_matrix[i] << " ";
+            std::cout << std::endl;
+            
+            std::cout << "[DEBUG LOG] Players Tracked: " << packet.player_count << std::endl;
+            for (int i = 0; i < std::min(packet.player_count, 3); ++i) {
+                const auto& p = packet.players[i];
+                std::cout << "[DEBUG LOG] Player " << i << ": active=" << p.active 
+                          << " team=" << p.team 
+                          << " hp=" << p.health
+                          << " name=" << p.model_name
+                          << " origin=(" << p.origin.x << ", " << p.origin.y << ", " << p.origin.z << ")"
+                          << " bone_count=" << p.bone_count << std::endl;
+                
+                if (p.active) {
+                    if (p.bone_count > 0) {
+                        std::cout << "            Bone 0 Pos: (" << p.bones[0].position.x << ", " << p.bones[0].position.y << ", " << p.bones[0].position.z << ")" << std::endl;
+                    }
+                    if (p.bone_count > 7) {
+                        std::cout << "            Bone 7 Pos: (" << p.bones[7].position.x << ", " << p.bones[7].position.y << ", " << p.bones[7].position.z << ")" << std::endl;
+                    }
+                    
+                    float sx = 0.0f, sy = 0.0f;
+                    bool screen_ok = world_to_screen(p.origin, &sx, &sy, render_view_matrix, width, height);
+                    std::cout << "            WorldToScreen(Origin): ok=" << (screen_ok ? "true" : "false")
+                              << " screen=(" << sx << ", " << sy << ")" << std::endl;
+                }
+            }
+        }
+
+        auto gpu_start = std::chrono::high_resolution_clock::now();
         overlay.begin_frame();
 
         // 1. Run Map Depth Prepass (if active and loaded)
@@ -756,13 +666,6 @@ int main() {
         }
 
         // 2. Render Player Chams
-        // Capture raytrace visibility safely
-        std::vector<float> rendering_vis;
-        {
-            std::lock_guard<std::mutex> lock(raytrace_mutex);
-            rendering_vis = global_player_visibility;
-        }
-
         struct RenderPalette {
             const CachedModel* model;
             std::vector<source2::Mat3x4> skinning_palette;
@@ -770,65 +673,121 @@ int main() {
             std::vector<Vec3> sanitized_bones;
         };
 
-        std::vector<RenderPalette> render_palettes(packet.player_count);
-        for (int i = 0; i < packet.player_count; ++i) {
-            const auto& player = packet.players[i];
-            if (!player.active) {
-                render_palettes[i].model = nullptr;
-                continue;
+        static std::vector<RenderPalette> render_palettes;
+        static std::vector<int> player_ubo_slots;
+        static std::vector<int> sorted_player_indices;
+        static std::vector<float> dummy_vis;
+
+        auto cpu_start = std::chrono::high_resolution_clock::now();
+        if (has_new_packet) {
+            dummy_vis.assign(packet.player_count * 128, 1.0f);
+
+            render_palettes.resize(packet.player_count);
+            for (int i = 0; i < packet.player_count; ++i) {
+                const auto& player = packet.players[i];
+                if (!player.active) {
+                    render_palettes[i].model = nullptr;
+                    continue;
+                }
+
+                const auto* model = model_cache.get_or_load(player.model_name);
+                if (!model || !model->valid) {
+                    render_palettes[i].model = nullptr;
+                    continue;
+                }
+
+                // Convert raw bone transforms to 3x4 world matrices
+                std::vector<source2::Mat3x4> world_bones(model->mesh.bone_count);
+                for (int j = 0; j < model->mesh.bone_count; ++j) {
+                    if (j < player.bone_count) {
+                        world_bones[j] = matrix_from_bone(player.bones[j].position, player.bones[j].rotation);
+                    } else {
+                        source2::Mat3x4 identity{};
+                        identity.mat[0][0] = identity.mat[1][1] = identity.mat[2][2] = 1.0f;
+                        world_bones[j] = identity;
+                    }
+                }
+
+                // Sanitise bones for LOD issues
+                sanitize_lod_bones(world_bones.data(), model->mesh.bone_count, model->mesh);
+
+                // Extract sanitized world positions for ESP logic (fixes game LOD issues)
+                std::vector<Vec3> sanitized_bones(model->mesh.bone_count);
+                for (int j = 0; j < model->mesh.bone_count; ++j) {
+                    sanitized_bones[j] = {
+                        world_bones[j].mat[0][3],
+                        world_bones[j].mat[1][3],
+                        world_bones[j].mat[2][3]
+                    };
+                }
+
+                // Multiply by inverse bind poses to build final skinned joint palette
+                std::vector<source2::Mat3x4> skinning_palette(model->mesh.bone_count);
+                for (int j = 0; j < model->mesh.bone_count; ++j) {
+                    if (j < static_cast<int>(model->mesh.inv_bind_poses.size())) {
+                        skinning_palette[j] = multiply_3x4(world_bones[j], model->mesh.inv_bind_poses[j]);
+                    } else {
+                        skinning_palette[j] = world_bones[j];
+                    }
+                }
+
+                bool is_player_visible = true;
+
+                render_palettes[i] = { model, skinning_palette, is_player_visible, sanitized_bones };
             }
 
-            const auto* model = model_cache.get_or_load(player.model_name);
-            if (!model || !model->valid) {
-                render_palettes[i].model = nullptr;
-                continue;
+            // 2.5 Batch convert and upload bone matrices to UBO
+            std::vector<float> batch_bones;
+            batch_bones.reserve(packet.player_count * 128 * 16);
+            player_ubo_slots.assign(packet.player_count, -1);
+            int current_slot = 0;
+
+            for (int i = 0; i < packet.player_count; ++i) {
+                const auto& rp = render_palettes[i];
+                if (!rp.model) continue;
+
+                float mat4_array[128 * 16];
+                std::memset(mat4_array, 0, sizeof(mat4_array));
+
+                for (size_t j = 0; j < rp.skinning_palette.size() && j < 128; ++j) {
+                    const auto& b = rp.skinning_palette[j];
+                    float* dest = &mat4_array[j * 16];
+                    // Column 0
+                    dest[0] = b.mat[0][0]; dest[1] = b.mat[1][0]; dest[2] = b.mat[2][0]; dest[3] = 0.0f;
+                    // Column 1
+                    dest[4] = b.mat[0][1]; dest[5] = b.mat[1][1]; dest[6] = b.mat[2][1]; dest[7] = 0.0f;
+                    // Column 2
+                    dest[8] = b.mat[0][2]; dest[9] = b.mat[1][2]; dest[10] = b.mat[2][2]; dest[11] = 0.0f;
+                    // Column 3
+                    dest[12] = b.mat[0][3]; dest[13] = b.mat[1][3]; dest[14] = b.mat[2][3]; dest[15] = 1.0f;
+                }
+                for (size_t j = rp.skinning_palette.size(); j < 128; ++j) {
+                    float* dest = &mat4_array[j * 16];
+                    dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
+                }
+
+                batch_bones.insert(batch_bones.end(), mat4_array, mat4_array + 128 * 16);
+                player_ubo_slots[i] = current_slot++;
             }
 
-            // Convert raw bone transforms to 3x4 world matrices
-            std::vector<source2::Mat3x4> world_bones(model->mesh.bone_count);
-            for (int j = 0; j < model->mesh.bone_count; ++j) {
-                if (j < player.bone_count) {
-                    world_bones[j] = matrix_from_bone(player.bones[j].position, player.bones[j].rotation);
-                } else {
-                    source2::Mat3x4 identity{};
-                    identity.mat[0][0] = identity.mat[1][1] = identity.mat[2][2] = 1.0f;
-                    world_bones[j] = identity;
+            if (current_slot > 0) {
+                chams_renderer.upload_bones_batch(batch_bones.data(), current_slot);
+            }
+
+            // Sort active player indices by model VAO to optimize state changes
+            sorted_player_indices.clear();
+            sorted_player_indices.reserve(packet.player_count);
+            for (int i = 0; i < packet.player_count; ++i) {
+                if (render_palettes[i].model) {
+                    sorted_player_indices.push_back(i);
                 }
             }
-
-            // Sanitise bones for LOD issues
-            sanitize_lod_bones(world_bones.data(), model->mesh.bone_count, model->mesh);
-
-            // Extract sanitized world positions for ESP logic (fixes game LOD issues)
-            std::vector<Vec3> sanitized_bones(model->mesh.bone_count);
-            for (int j = 0; j < model->mesh.bone_count; ++j) {
-                sanitized_bones[j] = {
-                    world_bones[j].mat[0][3],
-                    world_bones[j].mat[1][3],
-                    world_bones[j].mat[2][3]
-                };
-            }
-
-            // Multiply by inverse bind poses to build final skinned joint palette
-            std::vector<source2::Mat3x4> skinning_palette(model->mesh.bone_count);
-            for (int j = 0; j < model->mesh.bone_count; ++j) {
-                if (j < static_cast<int>(model->mesh.inv_bind_poses.size())) {
-                    skinning_palette[j] = multiply_3x4(world_bones[j], model->mesh.inv_bind_poses[j]);
-                } else {
-                    skinning_palette[j] = world_bones[j];
-                }
-            }
-
-            bool is_player_visible = true;
-            if (!has_prepass) {
-                int head_idx = i * 128 + 7; // head joint
-                if (head_idx < static_cast<int>(rendering_vis.size())) {
-                    is_player_visible = (rendering_vis[head_idx] > 0.5f);
-                }
-            }
-
-            render_palettes[i] = { model, skinning_palette, is_player_visible, sanitized_bones };
+            std::sort(sorted_player_indices.begin(), sorted_player_indices.end(), [&](int a, int b) {
+                return render_palettes[a].model->vao < render_palettes[b].model->vao;
+            });
         }
+        auto cpu_end = std::chrono::high_resolution_clock::now();
+        double current_cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
         // Step 1: Glow Pass (render silhouettes and masks to FBO, blur, and composite)
         bool run_glow = cfg.glow_enabled || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
@@ -836,28 +795,80 @@ int main() {
             chams_renderer.begin_glow_pass(width, height, gl_vp, cam_pos_arr);
             
             if (cfg.glow_enabled) {
-                for (int i = 0; i < packet.player_count; ++i) {
-                    const auto& rp = render_palettes[i];
-                    if (!rp.model) continue;
+                size_t idx = 0;
+                while (idx < sorted_player_indices.size()) {
+                    int first_player_idx = sorted_player_indices[idx];
+                    const auto& first_rp = render_palettes[first_player_idx];
+                    
+                    if (!(first_rp.is_visible || cfg.show_invisible)) {
+                        idx++;
+                        continue;
+                    }
 
-                    if (rp.is_visible || cfg.show_invisible) {
+                    unsigned int batch_vao = first_rp.model->vao;
+                    unsigned int batch_ibo = first_rp.model->ibo;
+                    size_t batch_index_count = first_rp.model->index_count;
+
+                    int ubo_slots[8];
+                    float colors[8 * 4];
+                    int count = 0;
+                    int base_slot = -1;
+
+                    size_t next_idx = idx;
+                    while (next_idx < sorted_player_indices.size() && count < 8) {
+                        int p_idx = sorted_player_indices[next_idx];
+                        const auto& rp = render_palettes[p_idx];
+
+                        if (rp.model->vao != batch_vao) {
+                            break;
+                        }
+
+                        if (!(rp.is_visible || cfg.show_invisible)) {
+                            next_idx++;
+                            continue;
+                        }
+
+                        int slot = player_ubo_slots[p_idx];
+                        if (base_slot < 0) {
+                            base_slot = slot;
+                        }
+
+                        int current_min = base_slot;
+                        int current_max = base_slot;
+                        for (int k = 0; k < count; ++k) {
+                            if (ubo_slots[k] < current_min) current_min = ubo_slots[k];
+                            if (ubo_slots[k] > current_max) current_max = ubo_slots[k];
+                        }
+                        int next_min = std::min(current_min, slot);
+                        int next_max = std::max(current_max, slot);
+                        if (next_max - next_min >= 8) {
+                            break;
+                        }
+
+                        ubo_slots[count] = slot;
+
+                        float custom_color[4];
                         if (cfg.glow_health_based) {
-                            float hp_factor = static_cast<float>(packet.players[i].health) / 100.0f;
+                            float hp_factor = static_cast<float>(packet.players[p_idx].health) / 100.0f;
                             if (hp_factor < 0.0f) hp_factor = 0.0f;
                             if (hp_factor > 1.0f) hp_factor = 1.0f;
-
-                            float custom_color[4];
                             for (int c = 0; c < 4; ++c) {
                                 custom_color[c] = cfg.glow_health_end[c] + hp_factor * (cfg.glow_health_start[c] - cfg.glow_health_end[c]);
                             }
-
-                            chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                                  rp.skinning_palette, custom_color);
                         } else {
-                            chams_renderer.render_glow_silhouette(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                                  rp.skinning_palette, cfg.glow_color);
+                            std::memcpy(custom_color, cfg.glow_color, sizeof(float) * 4);
                         }
+                        std::memcpy(&colors[count * 4], custom_color, sizeof(float) * 4);
+
+                        count++;
+                        next_idx++;
                     }
+
+                    if (count > 0) {
+                        chams_renderer.render_glow_silhouette_instanced(batch_vao, batch_ibo, batch_index_count,
+                                                                        ubo_slots, colors, count);
+                    }
+                    idx = next_idx;
                 }
             }
 
@@ -891,7 +902,7 @@ int main() {
                         glow_color_ptr = custom_glow_color;
                     }
 
-                    esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, rendering_vis, cfg, true, pulse_factor, glow_color_ptr);
+                    esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, dummy_vis, cfg, true, pulse_factor, glow_color_ptr);
                 }
 
                 esp_renderer.flush_lines();
@@ -923,7 +934,7 @@ int main() {
                 const auto& rp = render_palettes[i];
                 if (!rp.model) continue;
 
-                esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, rendering_vis, cfg, false, 1.0f, nullptr);
+                esp_renderer.add_skeleton_3d(rp.sanitized_bones, i, dummy_vis, cfg, false, 1.0f, nullptr);
             }
 
             if (has_prepass) {
@@ -955,48 +966,121 @@ int main() {
         }
 
         chams_renderer.begin_body_pass(gl_vp, cam_pos_arr);
-        for (int i = 0; i < packet.player_count; ++i) {
-            const auto& rp = render_palettes[i];
-            if (!rp.model) continue;
 
-            if (has_prepass) {
-                // Pixel-perfect depth prepass occlusion:
-                // A) Render hidden pass: depth test = GL_GREATER, depth write disabled
-                if (style_invis_id > 0 && cfg.show_invisible) {
-                    glDepthFunc(GL_GREATER);
-                    glDepthMask(GL_FALSE);
-                    chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
-                                               rp.skinning_palette, cfg.color_invis, style_invis_id,
-                                               cfg.color_invis_sec, 0.0f, current_glow_intensity);
+        auto draw_player_batches = [&](const std::vector<int>& target_indices, int style_id, const float* primary_color, const float* secondary_color) {
+            if (style_id <= 0 || target_indices.empty()) return;
+
+            size_t idx = 0;
+            while (idx < target_indices.size()) {
+                int first_player_idx = target_indices[idx];
+                const auto& first_rp = render_palettes[first_player_idx];
+
+                unsigned int batch_vao = first_rp.model->vao;
+                unsigned int batch_ibo = first_rp.model->ibo;
+                size_t batch_index_count = first_rp.model->index_count;
+
+                int ubo_slots[8];
+                float colors[8 * 4];
+                float glow_colors[8 * 4];
+                int count = 0;
+                int base_slot = -1;
+
+                size_t next_idx = idx;
+                while (next_idx < target_indices.size() && count < 8) {
+                    int p_idx = target_indices[next_idx];
+                    const auto& rp = render_palettes[p_idx];
+
+                    if (rp.model->vao != batch_vao) {
+                        break;
+                    }
+
+                    int slot = player_ubo_slots[p_idx];
+                    if (base_slot < 0) {
+                        base_slot = slot;
+                    }
+
+                    int current_min = base_slot;
+                    int current_max = base_slot;
+                    for (int k = 0; k < count; ++k) {
+                        if (ubo_slots[k] < current_min) current_min = ubo_slots[k];
+                        if (ubo_slots[k] > current_max) current_max = ubo_slots[k];
+                    }
+                    int next_min = std::min(current_min, slot);
+                    int next_max = std::max(current_max, slot);
+                    if (next_max - next_min >= 8) {
+                        break;
+                    }
+
+                    ubo_slots[count] = slot;
+                    std::memcpy(&colors[count * 4], primary_color, sizeof(float) * 4);
+                    if (secondary_color) {
+                        std::memcpy(&glow_colors[count * 4], secondary_color, sizeof(float) * 4);
+                    } else {
+                        float default_glow[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+                        std::memcpy(&glow_colors[count * 4], default_glow, sizeof(float) * 4);
+                    }
+
+                    count++;
+                    next_idx++;
                 }
-                
-                // B) Render visible pass: depth test = GL_LEQUAL, depth write enabled
-                if (style_vis_id > 0) {
-                    glDepthFunc(GL_LEQUAL);
-                    glDepthMask(GL_TRUE);
-                    chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count, 
-                                               rp.skinning_palette, cfg.color_vis, style_vis_id,
-                                               cfg.color_vis_sec, 0.0f, current_glow_intensity);
+
+                if (count > 0) {
+                    float default_glow[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+                    const float* pass_glow = secondary_color ? secondary_color : default_glow;
+                    chams_renderer.render_mesh_instanced(
+                        batch_vao, batch_ibo, batch_index_count,
+                        style_id, pass_glow,
+                        0.0f, current_glow_intensity, 0.0f,
+                        cfg.flat_chams_no_overlap, ubo_slots, colors,
+                        glow_colors, count
+                    );
                 }
-            } 
-            else {
+                idx = next_idx;
+            }
+        };
+
+        if (has_prepass) {
+            // Pixel-perfect depth prepass occlusion:
+            // A) Render hidden pass: depth test = GL_GREATER, depth write disabled
+            if (style_invis_id > 0 && cfg.show_invisible) {
+                glDepthFunc(GL_GREATER);
+                glDepthMask(GL_FALSE);
+                draw_player_batches(sorted_player_indices, style_invis_id, cfg.color_invis, cfg.color_invis_sec);
+            }
+            
+            // B) Render visible pass: depth test = GL_LEQUAL, depth write enabled
+            if (style_vis_id > 0) {
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_TRUE);
-                if (rp.is_visible) {
-                    if (style_vis_id > 0) {
-                        chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                   rp.skinning_palette, cfg.color_vis, style_vis_id,
-                                                   cfg.color_vis_sec, 0.0f, current_glow_intensity);
-                    }
+                draw_player_batches(sorted_player_indices, style_vis_id, cfg.color_vis, cfg.color_vis_sec);
+            }
+        } 
+        else {
+            std::vector<int> visible_indices;
+            std::vector<int> invisible_indices;
+            visible_indices.reserve(sorted_player_indices.size());
+            invisible_indices.reserve(sorted_player_indices.size());
+            for (int i : sorted_player_indices) {
+                if (render_palettes[i].is_visible) {
+                    visible_indices.push_back(i);
                 } else {
-                    if (style_invis_id > 0 && cfg.show_invisible) {
-                        chams_renderer.render_mesh(rp.model->vao, rp.model->ibo, rp.model->index_count,
-                                                   rp.skinning_palette, cfg.color_invis, style_invis_id,
-                                                   cfg.color_invis_sec, 0.0f, current_glow_intensity);
-                    }
+                    invisible_indices.push_back(i);
                 }
             }
+
+            if (style_vis_id > 0) {
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_TRUE);
+                draw_player_batches(visible_indices, style_vis_id, cfg.color_vis, cfg.color_vis_sec);
+            }
+
+            if (style_invis_id > 0 && cfg.show_invisible) {
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_TRUE);
+                draw_player_batches(invisible_indices, style_invis_id, cfg.color_invis, cfg.color_invis_sec);
+            }
         }
+
         chams_renderer.end_body_pass();
         glDepthMask(GL_TRUE); // Restore depth writes
 
@@ -1033,16 +1117,6 @@ int main() {
 
                     float bx, by, bw, bh;
                     if (get_player_bounds(rp.sanitized_bones, player.origin, packet.local_eye, render_view_matrix, width, height, bx, by, bw, bh, cfg)) {
-                        bool is_visible = true;
-                        int head_idx = i * 128 + 7; // head joint
-                        if (head_idx < static_cast<int>(rendering_vis.size())) {
-                            is_visible = (rendering_vis[head_idx] > 0.5f);
-                        }
-
-                        if (!is_visible && !cfg.show_invisible) {
-                            continue;
-                        }
-
                         // Draw bounding box
                         if (cfg.esp_box) {
                             esp_renderer.add_outlined_rect_2d(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness, cfg.esp_box_outline);
@@ -1088,6 +1162,15 @@ int main() {
             current_context = menu.get_window();
             last_menu_render = now_menu;
         }
+        auto gpu_end = std::chrono::high_resolution_clock::now();
+        double current_gpu_ms = std::chrono::duration<double, std::milli>(gpu_end - gpu_start).count();
+
+        if (has_new_packet) {
+            total_ipc_time_ms += current_ipc_ms;
+            total_cpu_time_ms += current_cpu_ms;
+            total_gpu_time_ms += current_gpu_ms;
+            metrics_count++;
+        }
 
         // High-precision pacing limiter
         if (cfg.fps > 0) {
@@ -1109,12 +1192,7 @@ int main() {
         }
     }
 
-    // Cleanly terminate persistent raytrace thread
-    raytrace_running = false;
-    raytrace_cv.notify_one();
-    if (raytrace_thread.joinable()) {
-        raytrace_thread.join();
-    }
+
 
     esp_renderer.cleanup();
 

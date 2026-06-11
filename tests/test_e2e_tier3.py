@@ -50,7 +50,6 @@ def test_tier3_concurrent_loading_responsiveness(run_fc2_chams, config_manager, 
         "vpk_path": vpk_path,
         "fps": 60,
         "use_depth_prepass": False,
-        "use_bvh_fallback": True,
         "maps_dir": "."
     }
     with open(config_manager, "w") as f:

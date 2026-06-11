@@ -236,6 +236,13 @@ void MenuClient::render_ui() {
                 }
             }
             ImGui::Spacing();
+
+            if (cfg.style_vis == "flat" || (cfg.show_invisible && cfg.style_invis == "flat")) {
+                ImGui::Checkbox("Uniform Flat Chams (No Overlap)", &cfg.flat_chams_no_overlap);
+                ImGui::SetItemTooltip("Eliminates internal overlapping details when flat chams are semi-transparent.");
+                ImGui::Spacing();
+            }
+
             ImGui::Spacing();
 
             // Outline Glow Header
@@ -370,16 +377,11 @@ void MenuClient::render_ui() {
             ImGui::Checkbox("Use Depth-Prepass (GPU)", &cfg.use_depth_prepass);
             ImGui::SetItemTooltip("Uploads and renders full VPK map geometry on the GPU to occlude player chams realistically.");
 
-            ImGui::Checkbox("Use BVH Fallback (CPU)", &cfg.use_bvh_fallback);
-            ImGui::SetItemTooltip("Calculates joint visibility on the CPU using raytracing when map geometry isn't loaded on GPU.");
-
             ImGui::Spacing();
             ImGui::Text("Active Mode:");
             ImGui::SameLine();
             if (cfg.use_depth_prepass) {
                 ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "GPU Depth Prepass");
-            } else if (cfg.use_bvh_fallback) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.8f, 1.0f), "CPU BVH Raytrace Fallback");
             } else {
                 ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "None (Always Visible)");
             }
@@ -820,7 +822,8 @@ void MenuClient::render_preview() {
         preview_renderer->begin_body_pass(gl_vp, cam_pos);
         preview_renderer->render_mesh(model->vao, model->ibo, model->index_count,
                                      identity_bones, cfg.color_vis, style_vis_id,
-                                     cfg.color_vis_sec, 0.0f, preview_glow_intensity);
+                                     cfg.color_vis_sec, 0.0f, preview_glow_intensity, 0.0f,
+                                     cfg.flat_chams_no_overlap);
         preview_renderer->end_body_pass();
     }
 
