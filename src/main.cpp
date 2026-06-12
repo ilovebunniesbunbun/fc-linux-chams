@@ -690,7 +690,12 @@ int main() {
                     continue;
                 }
 
-                const auto* model = model_cache.get_or_load(player.model_name);
+                std::string model_key = player.model_name;
+                if (player.has_defuser) {
+                    model_key += "#defuser";
+                }
+
+                const auto* model = model_cache.get_or_load(model_key);
                 if (!model || !model->valid) {
                     render_palettes[i].model = nullptr;
                     continue;
@@ -789,12 +794,11 @@ int main() {
         auto cpu_end = std::chrono::high_resolution_clock::now();
         double current_cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
-        // Step 1: Glow Pass (render silhouettes and masks to FBO, blur, and composite)
-        bool run_glow = cfg.glow_enabled || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
+        bool run_glow = (cfg.glow_enabled && cfg.outline_mode == "glow") || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
         if (run_glow) {
             chams_renderer.begin_glow_pass(width, height, gl_vp, cam_pos_arr);
             
-            if (cfg.glow_enabled) {
+            if (cfg.glow_enabled && cfg.outline_mode == "glow") {
                 size_t idx = 0;
                 while (idx < sorted_player_indices.size()) {
                     int first_player_idx = sorted_player_indices[idx];
@@ -968,7 +972,8 @@ int main() {
         chams_renderer.begin_body_pass(gl_vp, cam_pos_arr);
 
         auto draw_player_batches = [&](const std::vector<int>& target_indices, int style_id, const float* primary_color, const float* secondary_color) {
-            if (style_id <= 0 || target_indices.empty()) return;
+            if (target_indices.empty()) return;
+            if (style_id <= 0 && !(cfg.glow_enabled && cfg.outline_mode == "stencil")) return;
 
             size_t idx = 0;
             while (idx < target_indices.size()) {
@@ -1013,12 +1018,25 @@ int main() {
 
                     ubo_slots[count] = slot;
                     std::memcpy(&colors[count * 4], primary_color, sizeof(float) * 4);
-                    if (secondary_color) {
-                        std::memcpy(&glow_colors[count * 4], secondary_color, sizeof(float) * 4);
+                    float resolved_outline_color[4];
+                    if (cfg.glow_enabled && cfg.outline_mode == "stencil") {
+                        if (cfg.glow_health_based) {
+                            float hp_factor = static_cast<float>(packet.players[p_idx].health) / 100.0f;
+                            if (hp_factor < 0.0f) hp_factor = 0.0f;
+                            if (hp_factor > 1.0f) hp_factor = 1.0f;
+                            for (int c = 0; c < 4; ++c) {
+                                resolved_outline_color[c] = cfg.glow_health_end[c] + hp_factor * (cfg.glow_health_start[c] - cfg.glow_health_end[c]);
+                            }
+                        } else {
+                            std::memcpy(resolved_outline_color, cfg.glow_color, sizeof(float) * 4);
+                        }
+                    } else if (secondary_color) {
+                        std::memcpy(resolved_outline_color, secondary_color, sizeof(float) * 4);
                     } else {
                         float default_glow[4] = {1.0f, 0.0f, 0.0f, 1.0f};
-                        std::memcpy(&glow_colors[count * 4], default_glow, sizeof(float) * 4);
+                        std::memcpy(resolved_outline_color, default_glow, sizeof(float) * 4);
                     }
+                    std::memcpy(&glow_colors[count * 4], resolved_outline_color, sizeof(float) * 4);
 
                     count++;
                     next_idx++;
@@ -1027,29 +1045,32 @@ int main() {
                 if (count > 0) {
                     float default_glow[4] = {1.0f, 0.0f, 0.0f, 1.0f};
                     const float* pass_glow = secondary_color ? secondary_color : default_glow;
+                    bool is_stencil_outline = cfg.glow_enabled && cfg.outline_mode == "stencil";
                     chams_renderer.render_mesh_instanced(
                         batch_vao, batch_ibo, batch_index_count,
                         style_id, pass_glow,
-                        0.0f, current_glow_intensity, 0.0f,
+                        is_stencil_outline ? cfg.glow_thickness : 0.0f, current_glow_intensity, 0.0f,
                         cfg.flat_chams_no_overlap, ubo_slots, colors,
-                        glow_colors, count
+                        glow_colors, count,
+                        is_stencil_outline
                     );
                 }
                 idx = next_idx;
             }
         };
 
+        bool is_stencil_outline = cfg.glow_enabled && cfg.outline_mode == "stencil";
         if (has_prepass) {
             // Pixel-perfect depth prepass occlusion:
             // A) Render hidden pass: depth test = GL_GREATER, depth write disabled
-            if (style_invis_id > 0 && cfg.show_invisible) {
+            if ((style_invis_id > 0 || is_stencil_outline) && cfg.show_invisible) {
                 glDepthFunc(GL_GREATER);
                 glDepthMask(GL_FALSE);
                 draw_player_batches(sorted_player_indices, style_invis_id, cfg.color_invis, cfg.color_invis_sec);
             }
             
             // B) Render visible pass: depth test = GL_LEQUAL, depth write enabled
-            if (style_vis_id > 0) {
+            if (style_vis_id > 0 || is_stencil_outline) {
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_TRUE);
                 draw_player_batches(sorted_player_indices, style_vis_id, cfg.color_vis, cfg.color_vis_sec);
@@ -1068,13 +1089,13 @@ int main() {
                 }
             }
 
-            if (style_vis_id > 0) {
+            if (style_vis_id > 0 || is_stencil_outline) {
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_TRUE);
                 draw_player_batches(visible_indices, style_vis_id, cfg.color_vis, cfg.color_vis_sec);
             }
 
-            if (style_invis_id > 0 && cfg.show_invisible) {
+            if ((style_invis_id > 0 || is_stencil_outline) && cfg.show_invisible) {
                 glDepthFunc(GL_LEQUAL);
                 glDepthMask(GL_TRUE);
                 draw_player_batches(invisible_indices, style_invis_id, cfg.color_invis, cfg.color_invis_sec);
@@ -1083,6 +1104,11 @@ int main() {
 
         chams_renderer.end_body_pass();
         glDepthMask(GL_TRUE); // Restore depth writes
+
+        // Render 3D Map Collision Wireframe Visualizer
+        if (cfg.map_visualizer_enabled) {
+            depth_prepass.render_wireframe(gl_vp, cfg.map_visualizer_color, cfg.map_visualizer_depth_tested);
+        }
 
         // Render ESP Overlay (Skeleton, Box, Health Bar)
         if (cfg.esp_enabled) {

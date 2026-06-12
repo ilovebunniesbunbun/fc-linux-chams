@@ -126,7 +126,7 @@ static bool ResolveGeometryFromRefs(vpk::VPKDir& Dir, source2::ModelData& Md) {
     return Md.has_geometry();
 }
 
-static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out) {
+static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out, bool IncludeDefuser = false) {
     Out = {};
     if (!Md.valid()) return false;
 
@@ -175,6 +175,16 @@ static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out) {
     if (PartCount == 0) return false;
 
     for (size_t Part = 0; Part < PartCount; ++Part) {
+        if (Part < Md.mesh_names.size()) {
+            const std::string& name = Md.mesh_names[Part];
+            if (name == "firstperson_default_gloves_arms" || name == "firstperson_sleeves") {
+                continue;
+            }
+            if (name == "defusekit" && !IncludeDefuser) {
+                continue;
+            }
+        }
+
         const auto& Vb = Md.vertex_buffers[Part];
         const auto& Ib = Md.index_buffers[Part];
 
@@ -275,11 +285,18 @@ bool EnsureVpkOpen() {
     return s_VpkDir.is_open();
 }
 
-bool LoadModel(const std::string& ModelPath, AgentMesh& Out) {
+bool LoadModel(const std::string& ModelPath, AgentMesh& Out, bool IncludeDefuser) {
     Out = {};
     if (!EnsureVpkOpen()) return false;
 
-    const std::string VpkPath = NormalizePath(ModelPath, ".vmdl", ".vmdl_c");
+    std::string CleanPath = ModelPath;
+    if (CleanPath.find("#defuser") != std::string::npos) {
+        IncludeDefuser = true;
+        auto hash_pos = CleanPath.find("#defuser");
+        CleanPath.resize(hash_pos);
+    }
+
+    const std::string VpkPath = NormalizePath(CleanPath, ".vmdl", ".vmdl_c");
     auto Bytes = s_VpkDir.read_file(VpkPath);
     if (!Bytes) return false;
 
@@ -289,10 +306,10 @@ bool LoadModel(const std::string& ModelPath, AgentMesh& Out) {
     if (!ResolveGeometryFromRefs(s_VpkDir, *MdOpt)) return false;
 
     source2::build_per_vb_remaps(*MdOpt);
-    return BuildMesh(*MdOpt, Out);
+    return BuildMesh(*MdOpt, Out, IncludeDefuser);
 }
 
-bool LoadModelFromBytes(const std::vector<uint8_t>& Bytes, vpk::VPKDir& Vpk, AgentMesh& Out) {
+bool LoadModelFromBytes(const std::vector<uint8_t>& Bytes, vpk::VPKDir& Vpk, AgentMesh& Out, bool IncludeDefuser) {
     Out = {};
     if (Bytes.empty()) return false;
 
@@ -302,7 +319,7 @@ bool LoadModelFromBytes(const std::vector<uint8_t>& Bytes, vpk::VPKDir& Vpk, Age
     if (!ResolveGeometryFromRefs(Vpk, *MdOpt)) return false;
 
     source2::build_per_vb_remaps(*MdOpt);
-    return BuildMesh(*MdOpt, Out);
+    return BuildMesh(*MdOpt, Out, IncludeDefuser);
 }
 
 }

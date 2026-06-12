@@ -103,7 +103,17 @@ std::string ModelCache::resolve_model_key(const std::string& path) {
 const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
     if (model_name.empty()) return nullptr;
 
-    std::string key = resolve_model_key(model_name);
+    bool include_defuser = (model_name.find("#defuser") != std::string::npos);
+    std::string clean_name = model_name;
+    if (include_defuser) {
+        auto hash_pos = clean_name.find("#defuser");
+        clean_name.resize(hash_pos);
+    }
+
+    std::string key = resolve_model_key(clean_name);
+    if (include_defuser) {
+        key += "_defuser";
+    }
     
     // Check main cache
     auto it = cache.find(key);
@@ -126,20 +136,20 @@ const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
     }
 
     // Load from VPK since it's not cached
-    std::cout << "MODEL_CACHE: Loading model: " << model_name << " (resolved key: " << key << ")" << std::endl;
+    std::cout << "MODEL_CACHE: Loading model: " << clean_name << " (resolved key: " << key << ", include_defuser: " << include_defuser << ")" << std::endl;
     
     AgentParser::AgentMesh mesh;
-    bool success = AgentParser::LoadModel(model_name, mesh);
+    bool success = AgentParser::LoadModel(clean_name, mesh, include_defuser);
     
     if (!success && key.find("_variant") != std::string::npos) {
         // Fallback: try loading the base model directly from VPK
-        std::string base_name = model_name;
+        std::string base_name = clean_name;
         auto variant_pos = base_name.find("_variant");
         base_name.resize(variant_pos);
         base_name += ".vmdl";
         
         std::cout << "MODEL_CACHE: Variant load failed, trying base: " << base_name << std::endl;
-        success = AgentParser::LoadModel(base_name, mesh);
+        success = AgentParser::LoadModel(base_name, mesh, include_defuser);
     }
 
     CachedModel entry;

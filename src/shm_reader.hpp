@@ -29,6 +29,7 @@ struct PlayerData {
     int team;
     int health;
     int active;
+    int has_defuser;
     Vec3 origin;
     char model_name[64];        // e.g. "ctm_sas", "tm_leet" for mesh lookup
     int bone_count;             // actual bone count for this player

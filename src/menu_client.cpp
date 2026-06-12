@@ -204,11 +204,11 @@ void MenuClient::render_ui() {
     if (ImGui::BeginTabBar("SettingsTabs")) {
         
         // ----------------- TAB 1: PLAYER CHAMS -----------------
-        if (ImGui::BeginTabItem("Chams Styling")) {
+        if (ImGui::BeginTabItem("Chams")) {
             ImGui::Spacing();
             
             // Visible Chams Header
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Visible Chams (Models in View)");
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Visible Chams");
             ImGui::Separator();
             render_style_combo("Visible Style", cfg.style_vis);
             
@@ -222,7 +222,7 @@ void MenuClient::render_ui() {
             ImGui::Spacing();
 
             // Hidden Chams Header
-            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Hidden Chams (Models Occluded)");
+            ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "Occluded Chams");
             ImGui::Separator();
             ImGui::Checkbox("Show Invisible (Behind Walls)", &cfg.show_invisible);
             
@@ -245,23 +245,59 @@ void MenuClient::render_ui() {
 
             ImGui::Spacing();
 
-            // Outline Glow Header
-            ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.9f, 1.0f), "Outline Glow (Always Visible)");
+            // Player Outlines Header
+            ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.9f, 1.0f), "Player Outline");
             ImGui::Separator();
-            ImGui::Checkbox("Enable Outline Glow", &cfg.glow_enabled);
+            ImGui::Checkbox("Enable Player Outline", &cfg.glow_enabled);
             
-            bool show_glow_color_settings = cfg.glow_enabled || 
-                                           cfg.style_vis == "glow_blend" || cfg.style_vis == "cs2_glow" ||
-                                           (cfg.show_invisible && (cfg.style_invis == "glow_blend" || cfg.style_invis == "cs2_glow"));
+            bool has_glow_style = cfg.style_vis == "glow_blend" || cfg.style_vis == "cs2_glow" ||
+                                 (cfg.show_invisible && (cfg.style_invis == "glow_blend" || cfg.style_invis == "cs2_glow"));
 
-            if (show_glow_color_settings) {
+            if (cfg.glow_enabled) {
+                ImGui::Spacing();
+                ImGui::Text("Outline Type:");
+                
+                static const std::vector<std::pair<std::string, std::string>> outline_mode_options = {
+                    {"glow", "Glow Outline (Screen Space)"},
+                    {"stencil", "Stencil Outline (Crisp Mesh)"}
+                };
+
+                std::string current_mode_label = "Glow Outline (Screen Space)";
+                for (const auto& opt : outline_mode_options) {
+                    if (opt.first == cfg.outline_mode) {
+                        current_mode_label = opt.second;
+                        break;
+                    }
+                }
+
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::BeginCombo("##OutlineType", current_mode_label.c_str())) {
+                    for (const auto& opt : outline_mode_options) {
+                        bool is_selected = (opt.first == cfg.outline_mode);
+                        if (ImGui::Selectable(opt.second.c_str(), is_selected)) {
+                            cfg.outline_mode = opt.first;
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
+            bool show_glow_controls = (cfg.glow_enabled && cfg.outline_mode == "glow") || has_glow_style;
+            bool show_stencil_controls = (cfg.glow_enabled && cfg.outline_mode == "stencil") && !has_glow_style;
+
+            if (show_glow_controls || show_stencil_controls) {
                 ImGui::Spacing();
 
-                if (cfg.glow_enabled) {
+                if (show_glow_controls) {
                     ImGui::Text("Glow Thickness: %.2f", cfg.glow_thickness);
-                    ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::SliderFloat("##GlowThickness", &cfg.glow_thickness, 0.0f, 6.0f, "%.2f");
+                } else {
+                    ImGui::Text("Outline Thickness: %.2f", cfg.glow_thickness);
                 }
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##GlowThickness", &cfg.glow_thickness, 0.0f, 6.0f, "%.2f");
 
                 if (cfg.glow_health_based) {
                     ImGui::Text("Health Start Color (100 HP):");
@@ -272,24 +308,29 @@ void MenuClient::render_ui() {
                     ImGui::SetNextItemWidth(-1.0f);
                     ImGui::ColorEdit4("##HealthEndColor", cfg.glow_health_end, ImGuiColorEditFlags_AlphaBar);
                 } else {
-                    ImGui::Text("Glow Color:");
+                    if (show_glow_controls) {
+                        ImGui::Text("Glow Color:");
+                    } else {
+                        ImGui::Text("Outline Color:");
+                    }
                     ImGui::SetNextItemWidth(-1.0f);
                     ImGui::ColorEdit4("##GlowColor", cfg.glow_color, ImGuiColorEditFlags_AlphaBar);
                 }
 
                 ImGui::Checkbox("Health-Based Color", &cfg.glow_health_based);
-                ImGui::SetItemTooltip("Interpolates glow color from Health Start Color (100 HP) to Health End Color (1 HP).");
-
-                ImGui::Text("Glow Strength: %.2f", cfg.glow_intensity);
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::SliderFloat("##GlowIntensity", &cfg.glow_intensity, 0.0f, 5.0f, "%.2f");
-
-                ImGui::Spacing();
-                ImGui::Checkbox("Enable Breathing/Pulse Effect", &cfg.glow_pulse);
-                if (cfg.glow_pulse) {
-                    ImGui::Text("Pulse Speed: %.2f", cfg.glow_pulse_speed);
+                
+                if (show_glow_controls) {
+                    ImGui::Text("Glow Strength: %.2f", cfg.glow_intensity);
                     ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::SliderFloat("##GlowPulseSpeed", &cfg.glow_pulse_speed, 0.1f, 10.0f, "%.2f");
+                    ImGui::SliderFloat("##GlowIntensity", &cfg.glow_intensity, 0.0f, 5.0f, "%.2f");
+
+                    ImGui::Spacing();
+                    ImGui::Checkbox("Enable Breathing/Pulse Effect", &cfg.glow_pulse);
+                    if (cfg.glow_pulse) {
+                        ImGui::Text("Pulse Speed: %.2f", cfg.glow_pulse_speed);
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##GlowPulseSpeed", &cfg.glow_pulse_speed, 0.1f, 10.0f, "%.2f");
+                    }
                 }
                 ImGui::Spacing();
             }
@@ -298,7 +339,7 @@ void MenuClient::render_ui() {
         }
 
         // ----------------- TAB: ESP OVERLAY -----------------
-        if (ImGui::BeginTabItem("ESP Overlay")) {
+        if (ImGui::BeginTabItem("ESP")) {
             ImGui::Spacing();
             ImGui::Checkbox("Enable ESP Overlay", &cfg.esp_enabled);
             ImGui::Separator();
@@ -312,7 +353,7 @@ void MenuClient::render_ui() {
                     ImGui::SliderFloat("Skeleton Thickness##skele_th", &cfg.esp_skeleton_thickness, 0.5f, 5.0f, "%.1f");
                     ImGui::ColorEdit4("Visible Color##skele_vis", cfg.esp_skeleton_color_vis, ImGuiColorEditFlags_AlphaBar);
                     ImGui::ColorEdit4("Occluded Color##skele_invis", cfg.esp_skeleton_color_invis, ImGuiColorEditFlags_AlphaBar);
-                    ImGui::Checkbox("Enable Skeleton Glow##skele_glow", &cfg.esp_skeleton_glow);
+                    ImGui::Checkbox("Skeleton glow##skele_glow", &cfg.esp_skeleton_glow);
                     if (cfg.esp_skeleton_glow) {
                         ImGui::Checkbox("Glow Pulse##skele_glow_puls", &cfg.esp_skeleton_glow_pulse);
                         if (cfg.esp_skeleton_glow_pulse) {
@@ -369,12 +410,12 @@ void MenuClient::render_ui() {
         }
 
         // ----------------- TAB 2: OCCLUSION & ENGINE -----------------
-        if (ImGui::BeginTabItem("Occlusion & Engine")) {
+        if (ImGui::BeginTabItem("VPK Parser")) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "Depth Occlusion Handlers");
+            ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "VPK Parser");
             ImGui::Separator();
             
-            ImGui::Checkbox("Use Depth-Prepass (GPU)", &cfg.use_depth_prepass);
+            ImGui::Checkbox("Enable Vis-Check", &cfg.use_depth_prepass);
             ImGui::SetItemTooltip("Uploads and renders full VPK map geometry on the GPU to occlude player chams realistically.");
 
             ImGui::Spacing();
@@ -384,6 +425,16 @@ void MenuClient::render_ui() {
                 ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "GPU Depth Prepass");
             } else {
                 ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "None (Always Visible)");
+            }
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "Map Geometry");
+            ImGui::Separator();
+            ImGui::Checkbox("Show Map Geometry", &cfg.map_visualizer_enabled);
+            if (cfg.map_visualizer_enabled) {
+                ImGui::Checkbox("Only Visibile", &cfg.map_visualizer_depth_tested);
+                ImGui::ColorEdit4("Wireframe Color", cfg.map_visualizer_color, ImGuiColorEditFlags_AlphaBar);
             }
             ImGui::Spacing();
             ImGui::Separator();
@@ -748,10 +799,10 @@ void MenuClient::render_preview() {
     }
 
     // 1. Draw Glow Pass (Chams glow and/or Skeleton glow)
-    bool draw_glow = cfg.glow_enabled || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
+    bool draw_glow = (cfg.glow_enabled && cfg.outline_mode == "glow") || (cfg.esp_enabled && cfg.esp_skeleton && cfg.esp_skeleton_glow);
     if (draw_glow) {
         preview_renderer->begin_glow_pass(preview_w, preview_h, gl_vp, cam_pos);
-        if (cfg.glow_enabled) {
+        if (cfg.glow_enabled && cfg.outline_mode == "glow") {
             preview_renderer->render_glow_silhouette(model->vao, model->ibo, model->index_count,
                                                      identity_bones, cfg.glow_color);
         }
@@ -763,7 +814,7 @@ void MenuClient::render_preview() {
             esp_renderer.clear();
             esp_renderer.set_projection(gl_vp);
 
-            float override_glow_color[4] = { 0.0f };
+            float override_glow_color[4];
             if (cfg.esp_skeleton_glow_health_based) {
                 float hp_pct = 1.0f; // 100% health in preview
                 for (int c = 0; c < 4; ++c) {
@@ -793,7 +844,7 @@ void MenuClient::render_preview() {
         bool pulse = cfg.glow_pulse;
         float speed = cfg.glow_pulse_speed;
 
-        if (!cfg.glow_enabled && cfg.esp_skeleton_glow) {
+        if (!(cfg.glow_enabled && cfg.outline_mode == "glow") && cfg.esp_skeleton_glow) {
             glow_thick = cfg.esp_skeleton_glow_thickness;
             glow_int = cfg.esp_skeleton_glow_intensity;
             pulse = cfg.esp_skeleton_glow_pulse;
@@ -812,7 +863,8 @@ void MenuClient::render_preview() {
     }
 
     // 2. Draw Body Pass (Chams)
-    if (style_vis_id > 0) {
+    bool is_stencil_outline = cfg.glow_enabled && cfg.outline_mode == "stencil";
+    if (style_vis_id > 0 || is_stencil_outline) {
         float preview_glow_intensity = cfg.glow_intensity;
         if (cfg.glow_pulse) {
             float time = static_cast<float>(glfwGetTime());
@@ -822,8 +874,9 @@ void MenuClient::render_preview() {
         preview_renderer->begin_body_pass(gl_vp, cam_pos);
         preview_renderer->render_mesh(model->vao, model->ibo, model->index_count,
                                      identity_bones, cfg.color_vis, style_vis_id,
-                                     cfg.color_vis_sec, 0.0f, preview_glow_intensity, 0.0f,
-                                     cfg.flat_chams_no_overlap);
+                                     is_stencil_outline ? cfg.glow_color : cfg.color_vis_sec,
+                                     is_stencil_outline ? cfg.glow_thickness : 0.0f, preview_glow_intensity, 0.0f,
+                                     cfg.flat_chams_no_overlap, -1, is_stencil_outline);
         preview_renderer->end_body_pass();
     }
 

@@ -25,24 +25,25 @@ OverlayConfig load_config(const std::string& filename) {
                 {"scaling", "stretched"},
                 {"game_x", 0},
                 {"game_y", 0},
-                {"fps", 0},
+                {"fps", 143},
                 {"show_fps", true},
                 {"vsync", false},
                 {"extrapolate", false},
-                {"color_visible", {0, 255, 0, 166}},
+                {"color_visible", {0, 255, 0, 209}},
                 {"color_visible_sec", {255, 255, 0, 204}},
-                {"color_invisible", {255, 0, 0, 166}},
+                {"color_invisible", {255, 0, 0, 224}},
                 {"color_invisible_sec", {255, 127, 0, 204}},
                 {"show_invisible", true},
                 {"maps_dir", "./maps"},
                 {"hyprland_support", false},
                 {"vpk_path", "auto"},
-                {"chams_style_visible", "metallic"},
+                {"chams_style_visible", "flat"},
                 {"chams_style_hidden", "flat"},
                 {"use_depth_prepass", true},
                 {"use_bvh_fallback", true},
-                {"flat_chams_no_overlap", false},
+                {"flat_chams_no_overlap", true},
                 {"glow_enabled", false},
+                {"outline_mode", "glow"},
                 {"glow_health_based", false},
                 {"glow_health_start", {0, 255, 0, 204}},
                 {"glow_health_end", {255, 0, 0, 204}},
@@ -52,7 +53,7 @@ OverlayConfig load_config(const std::string& filename) {
                 {"glow_pulse", false},
                 {"glow_pulse_speed", 2.0},
                 {"esp_enabled", true},
-                {"esp_skeleton", true},
+                {"esp_skeleton", false},
                 {"esp_rounded_skeleton", false},
                 {"esp_skeleton_thickness", 1.5},
                 {"esp_skeleton_color_vis", {0, 255, 0, 204}},
@@ -66,21 +67,24 @@ OverlayConfig load_config(const std::string& filename) {
                 {"esp_skeleton_glow_health_based", false},
                 {"esp_skeleton_glow_health_start", {0, 255, 0, 204}},
                 {"esp_skeleton_glow_health_end", {255, 0, 0, 204}},
-                {"esp_box", true},
+                {"esp_box", false},
                 {"esp_box_thickness", 1.5},
                 {"esp_box_color", {255, 255, 255, 204}},
                 {"esp_box_outline", true},
                 {"esp_box_mode", 1},
                 {"esp_box_static_w", 41500.0},
                 {"esp_box_static_h", 76200.0},
-                {"esp_health_bar", true},
+                {"esp_health_bar", false},
                 {"esp_health_bar_gradient", true},
                 {"esp_health_bar_color", {0, 255, 0, 204}},
                 {"esp_health_bar_gradient_start", {0, 255, 0, 204}},
                 {"esp_health_bar_gradient_end", {255, 0, 0, 204}},
                 {"esp_health_bar_outline", true},
                 {"esp_health_bar_thickness", 2.0},
-                {"debug_bridge", false}
+                {"debug_bridge", false},
+                {"map_visualizer_enabled", false},
+                {"map_visualizer_depth_tested", true},
+                {"map_visualizer_color", std::vector<int>{0, 199, 99, 119}}
             };
             outfile << default_json.dump(4) << std::endl;
             outfile.close();
@@ -136,8 +140,16 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("use_bvh_fallback")) cfg.use_bvh_fallback = j["use_bvh_fallback"].get<bool>();
         if (j.contains("flat_chams_no_overlap")) cfg.flat_chams_no_overlap = j["flat_chams_no_overlap"].get<bool>();
         if (j.contains("debug_bridge")) cfg.debug_bridge = j["debug_bridge"].get<bool>();
+        if (j.contains("map_visualizer_enabled")) cfg.map_visualizer_enabled = j["map_visualizer_enabled"].get<bool>();
+        if (j.contains("map_visualizer_depth_tested")) cfg.map_visualizer_depth_tested = j["map_visualizer_depth_tested"].get<bool>();
+        if (j.contains("map_visualizer_color") && j["map_visualizer_color"].is_array() && j["map_visualizer_color"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.map_visualizer_color[i] = j["map_visualizer_color"][i].get<float>() / 255.0f;
+            }
+        }
 
         if (j.contains("glow_enabled")) cfg.glow_enabled = j["glow_enabled"].get<bool>();
+        if (j.contains("outline_mode")) cfg.outline_mode = j["outline_mode"].get<std::string>();
         if (j.contains("glow_health_based")) cfg.glow_health_based = j["glow_health_based"].get<bool>();
         if (j.contains("glow_thickness")) cfg.glow_thickness = j["glow_thickness"].get<float>();
         if (j.contains("glow_intensity")) cfg.glow_intensity = j["glow_intensity"].get<float>();
@@ -292,6 +304,7 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"use_bvh_fallback", cfg.use_bvh_fallback},
         {"flat_chams_no_overlap", cfg.flat_chams_no_overlap},
         {"glow_enabled", cfg.glow_enabled},
+        {"outline_mode", cfg.outline_mode},
         {"glow_health_based", cfg.glow_health_based},
         {"glow_thickness", cfg.glow_thickness},
         {"glow_intensity", cfg.glow_intensity},
@@ -391,6 +404,15 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
             static_cast<int>(cfg.esp_health_bar_gradient_end[3] * 255.0f)
         }},
         {"debug_bridge", cfg.debug_bridge}
+    };
+
+    j["map_visualizer_enabled"] = cfg.map_visualizer_enabled;
+    j["map_visualizer_depth_tested"] = cfg.map_visualizer_depth_tested;
+    j["map_visualizer_color"] = std::vector<int>{
+        static_cast<int>(cfg.map_visualizer_color[0] * 255.0f),
+        static_cast<int>(cfg.map_visualizer_color[1] * 255.0f),
+        static_cast<int>(cfg.map_visualizer_color[2] * 255.0f),
+        static_cast<int>(cfg.map_visualizer_color[3] * 255.0f)
     };
 
     // Try saving in current directory first

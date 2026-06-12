@@ -219,14 +219,15 @@ out vec4 FragColor;
 uniform sampler2D uTexture;
 uniform vec2 uDir;
 
-const float weights[7] = float[](0.198596, 0.175713, 0.121703, 0.065984, 0.027839, 0.009246, 0.002403);
+const float weights[4] = float[](0.198596, 0.297416, 0.093823, 0.011649);
+const float offsets[4] = float[](0.0, 1.409200, 3.296718, 5.206284);
 
 void main() {
-    vec4 texColor = texture(uTexture, vUV);
-    vec4 color = texColor * weights[0];
-    for (int i = 1; i < 7; ++i) {
-        color += texture(uTexture, vUV + float(i) * uDir) * weights[i];
-        color += texture(uTexture, vUV - float(i) * uDir) * weights[i];
+    vec4 color = texture(uTexture, vUV) * weights[0];
+    for (int i = 1; i < 4; ++i) {
+        vec2 offsetVal = offsets[i] * uDir;
+        color += texture(uTexture, vUV + offsetVal) * weights[i];
+        color += texture(uTexture, vUV - offsetVal) * weights[i];
     }
     FragColor = color;
 }
@@ -566,14 +567,9 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
                                             int style, const float* glow_color,
                                             float glow_thickness, float glow_intensity, float glow_blur,
                                             bool no_overlap, const int* ubo_slots, const float* colors,
-                                            const float* glow_colors, int count) {
+                                            const float* glow_colors, int count,
+                                            bool stencil_outline) {
     if (count <= 0) return;
-
-    unsigned int target_program = (style == 2) ? flat_program_id : program_id;
-    if (current_program != target_program) {
-        glUseProgram(target_program);
-        current_program = target_program;
-    }
 
     // Find base slot (minimum) to bind range
     int base_slot = ubo_slots[0];
@@ -593,7 +589,133 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
         relative_slots[i] = ubo_slots[i] - base_slot;
     }
 
-    if (style == 2) {
+    // Bind VAO/IBO and draw instanced
+    if (current_vao != vao) {
+        glBindVertexArray(vao);
+        current_vao = vao;
+    }
+    if (current_ibo != ibo) {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+        current_ibo = ibo;
+    }
+
+    if (stencil_outline) {
+        GLboolean stencil_enabled = glIsEnabled(GL_STENCIL_TEST);
+        GLint saved_stencil_func, saved_stencil_ref, saved_stencil_mask;
+        GLint saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass;
+        GLint saved_stencil_writemask;
+        GLboolean depth_write_enabled;
+        GLboolean color_write_mask[4];
+
+        glGetIntegerv(GL_STENCIL_FUNC, &saved_stencil_func);
+        glGetIntegerv(GL_STENCIL_REF, &saved_stencil_ref);
+        glGetIntegerv(GL_STENCIL_VALUE_MASK, &saved_stencil_mask);
+        glGetIntegerv(GL_STENCIL_FAIL, &saved_stencil_fail);
+        glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &saved_stencil_pass_depth_fail);
+        glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &saved_stencil_pass_depth_pass);
+        glGetIntegerv(GL_STENCIL_WRITEMASK, &saved_stencil_writemask);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write_enabled);
+        glGetBooleanv(GL_COLOR_WRITEMASK, color_write_mask);
+
+        // --- Pass 1: Draw the base body ---
+        glEnable(GL_STENCIL_TEST);
+        glStencilMask(0xFF);
+        glStencilFunc(GL_ALWAYS, 1, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
+        if (style == 0) {
+            // Disable color writes so body is transparent/invisible (hollow outline)
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        }
+
+        // Bind appropriate program for the body style
+        unsigned int body_program = (style == 2 || style == 0) ? flat_program_id : program_id;
+        glUseProgram(body_program);
+        current_program = body_program;
+
+        if (body_program == flat_program_id) {
+            glUniform4fv(loc_flat_colors, count, colors);
+            glUniform1iv(loc_flat_ubo_slots, count, relative_slots);
+        } else {
+            glUniform4fv(loc_colors, count, colors);
+            if (glow_colors) {
+                glUniform4fv(loc_glow_colors, count, glow_colors);
+            } else {
+                float default_glow_array[8 * 4];
+                for (int i = 0; i < 8; ++i) {
+                    default_glow_array[i * 4 + 0] = 1.0f;
+                    default_glow_array[i * 4 + 1] = 0.0f;
+                    default_glow_array[i * 4 + 2] = 0.0f;
+                    default_glow_array[i * 4 + 3] = 1.0f;
+                }
+                glUniform4fv(loc_glow_colors, 8, default_glow_array);
+            }
+            glUniform1iv(loc_ubo_slots, count, relative_slots);
+            glUniform1i(loc_style, style);
+            glUniform1f(loc_glow_thickness, 0.0f);
+            glUniform1f(loc_glow_intensity, 1.0f);
+            glUniform1f(loc_glow_blur, 0.0f);
+        }
+
+        // Draw the base model
+        glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
+
+        if (style == 0) {
+            // Restore color writes
+            glColorMask(color_write_mask[0], color_write_mask[1], color_write_mask[2], color_write_mask[3]);
+        }
+
+        // --- Pass 2: Draw the expanded outline ---
+        glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+        glStencilMask(0x00); // Disable stencil writes
+        glDepthMask(GL_FALSE); // Disable depth writes for outline shell
+
+        // Bind main shader program and set uniforms for flat style (uStyle = 2)
+        glUseProgram(program_id);
+        current_program = program_id;
+
+        // Use the outline colors as the flat fill color
+        if (glow_colors) {
+            glUniform4fv(loc_colors, count, glow_colors);
+        } else {
+            float default_glow_array[8 * 4];
+            for (int i = 0; i < 8; ++i) {
+                default_glow_array[i * 4 + 0] = 1.0f;
+                default_glow_array[i * 4 + 1] = 0.0f;
+                default_glow_array[i * 4 + 2] = 0.0f;
+                default_glow_array[i * 4 + 3] = 1.0f;
+            }
+            glUniform4fv(loc_colors, 8, default_glow_array);
+        }
+        glUniform1iv(loc_ubo_slots, count, relative_slots);
+        glUniform1i(loc_style, 2); // Flat style
+
+        float active_thickness = glow_thickness > 0.0f ? glow_thickness : 1.5f;
+        glUniform1f(loc_glow_thickness, active_thickness);
+        glUniform1f(loc_glow_intensity, 1.0f);
+        glUniform1f(loc_glow_blur, 0.0f);
+
+        // Draw the expanded outline shell
+        glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
+
+        // Restore original OpenGL states
+        glDepthMask(depth_write_enabled);
+        glStencilFunc(saved_stencil_func, saved_stencil_ref, saved_stencil_mask);
+        glStencilOp(saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass);
+        glStencilMask(saved_stencil_writemask);
+        if (!stencil_enabled) {
+            glDisable(GL_STENCIL_TEST);
+        }
+        return;
+    }
+
+    unsigned int target_program = (style == 2 || style == 0) ? flat_program_id : program_id;
+    if (current_program != target_program) {
+        glUseProgram(target_program);
+        current_program = target_program;
+    }
+
+    if (style == 2 || style == 0) {
         glUniform4fv(loc_flat_colors, count, colors);
         glUniform1iv(loc_flat_ubo_slots, count, relative_slots);
     } else {
@@ -616,16 +738,6 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
         glUniform1f(loc_glow_thickness, glow_thickness);
         glUniform1f(loc_glow_intensity, glow_intensity);
         glUniform1f(loc_glow_blur, glow_blur);
-    }
-
-    // Bind VAO/IBO and draw instanced
-    if (current_vao != vao) {
-        glBindVertexArray(vao);
-        current_vao = vao;
-    }
-    if (current_ibo != ibo) {
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-        current_ibo = ibo;
     }
 
     if (style == 2 && no_overlap) {
@@ -670,7 +782,8 @@ void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t in
                                   float glow_intensity,
                                   float glow_blur,
                                   bool no_overlap,
-                                  int ubo_slot) {
+                                  int ubo_slot,
+                                  bool stencil_outline) {
     int ubo_slots[1] = { ubo_slot >= 0 ? ubo_slot : 0 };
     float colors[4];
     std::memcpy(colors, color, sizeof(float) * 4);
@@ -707,7 +820,7 @@ void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t in
 
     render_mesh_instanced(vao, ibo, index_count, style, glow_colors,
                           glow_thickness, glow_intensity, glow_blur,
-                          no_overlap, ubo_slots, colors, glow_colors, 1);
+                          no_overlap, ubo_slots, colors, glow_colors, 1, stencil_outline);
 }
 
 void GpuChamsRenderer::end() {

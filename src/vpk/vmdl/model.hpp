@@ -27,8 +27,8 @@ struct AgentMesh {
     bool valid      = false;
 };
 
-bool LoadModel(const std::string& ModelPath, AgentMesh& Out);
-bool LoadModelFromBytes(const std::vector<uint8_t>& Bytes, vpk::VPKDir& Vpk, AgentMesh& Out);
+bool LoadModel(const std::string& ModelPath, AgentMesh& Out, bool IncludeDefuser = false);
+bool LoadModelFromBytes(const std::vector<uint8_t>& Bytes, vpk::VPKDir& Vpk, AgentMesh& Out, bool IncludeDefuser = false);
 bool EnsureVpkOpen();
 void SetCustomVpkPath(const std::string& path);
 

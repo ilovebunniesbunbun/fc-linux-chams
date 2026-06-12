@@ -1410,6 +1410,7 @@ struct ModelData {
     std::vector<int>           remapping_table_starts;
 
     std::vector<std::string>   mesh_resources;
+    std::vector<std::string>   mesh_names;
 
     struct MeshGroupInfo {
         std::string              group_name;
@@ -1809,6 +1810,11 @@ inline bool extract_embedded_meshes_from_ctrl(const kv3::KVValue& ctrl_root,
         const auto* em = embedded->get(ei);
         if (!em || !em->is_object()) continue;
 
+        std::string em_name;
+        if (const auto* name_v = em->get("m_Name")) {
+            em_name = name_v->as_string();
+        }
+
         const size_t remap_section_begin = md.remapping_table.size();
 
         const kv3::KVValue* mesh_remap = em->get("m_nRemappingTable");
@@ -1853,6 +1859,7 @@ inline bool extract_embedded_meshes_from_ctrl(const kv3::KVValue& ctrl_root,
                         static_cast<int>(remap_section_begin));
                 }
                 md.vertex_buffers.push_back(std::move(vb));
+                md.mesh_names.push_back(em_name);
                 any_geometry = true;
                 ++vbs_added;
             }
@@ -1879,6 +1886,7 @@ inline bool extract_embedded_meshes_from_ctrl(const kv3::KVValue& ctrl_root,
                         static_cast<int>(remap_section_begin));
                 }
                 md.vertex_buffers.push_back(std::move(vb));
+                md.mesh_names.push_back(em_name);
                 any_geometry = true;
                 ++vbs_added;
             }

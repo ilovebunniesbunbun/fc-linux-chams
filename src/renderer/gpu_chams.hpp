@@ -25,13 +25,15 @@ public:
                      float glow_intensity = 1.0f,
                      float glow_blur = 0.0f,
                      bool no_overlap = false,
-                     int ubo_slot = -1);
+                     int ubo_slot = -1,
+                     bool stencil_outline = false);
 
     void render_mesh_instanced(unsigned int vao, unsigned int ibo, size_t index_count,
                                int style, const float* glow_color,
                                float glow_thickness, float glow_intensity, float glow_blur,
                                bool no_overlap, const int* ubo_slots, const float* colors,
-                               const float* glow_colors, int count);
+                               const float* glow_colors, int count,
+                               bool stencil_outline = false);
 
     void upload_bones_batch(const float* mat4_data, size_t count);
 
