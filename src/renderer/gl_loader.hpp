@@ -84,6 +84,8 @@ typedef void (APIENTRY * PFNGLDELETERENDERBUFFERSPROC) (GLsizei n, const GLuint 
 typedef void (APIENTRY * PFNGLDRAWBUFFERSPROC) (GLsizei n, const GLenum *bufs);
 
 typedef void (APIENTRY * PFNGLDRAWELEMENTSINSTANCEDPROC) (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei primcount);
+typedef void (APIENTRY * PFNGLVERTEXATTRIBDIVISORPROC) (GLuint index, GLuint divisor);
+typedef void (APIENTRY * PFNGLDRAWARRAYSINSTANCEDPROC) (GLenum mode, GLint first, GLsizei count, GLsizei primcount);
 
 typedef GLuint (APIENTRY * PFNGLGETUNIFORMBLOCKINDEXPROC) (GLuint program, const GLchar *uniformBlockName);
 typedef void (APIENTRY * PFNGLUNIFORMBLOCKBINDINGPROC) (GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
@@ -141,6 +143,8 @@ inline PFNGLDELETERENDERBUFFERSPROC glDeleteRenderbuffers = nullptr;
 inline PFNGLDRAWBUFFERSPROC glDrawBuffers = nullptr;
 
 inline PFNGLDRAWELEMENTSINSTANCEDPROC glDrawElementsInstanced = nullptr;
+inline PFNGLVERTEXATTRIBDIVISORPROC glVertexAttribDivisor = nullptr;
+inline PFNGLDRAWARRAYSINSTANCEDPROC glDrawArraysInstanced = nullptr;
 
 inline PFNGLGETUNIFORMBLOCKINDEXPROC glGetUniformBlockIndex = nullptr;
 inline PFNGLUNIFORMBLOCKBINDINGPROC glUniformBlockBinding = nullptr;
@@ -210,9 +214,11 @@ inline bool load_gl_functions() {
     glBufferSubData = (PFNGLBUFFERSUBDATAPROC)get_proc("glBufferSubData");
     glBindBufferRange = (PFNGLBINDBUFFERRANGEPROC)get_proc("glBindBufferRange");
     glDrawElementsInstanced = (PFNGLDRAWELEMENTSINSTANCEDPROC)get_proc("glDrawElementsInstanced");
+    glVertexAttribDivisor = (PFNGLVERTEXATTRIBDIVISORPROC)get_proc("glVertexAttribDivisor");
+    glDrawArraysInstanced = (PFNGLDRAWARRAYSINSTANCEDPROC)get_proc("glDrawArraysInstanced");
 
     return glGenVertexArrays && glBindVertexArray && glGenBuffers && glBindBuffer && glBufferData &&
            glCreateShader && glShaderSource && glCompileShader && glCreateProgram && glLinkProgram && glUseProgram &&
            glDrawBuffers && glGetUniformBlockIndex && glUniformBlockBinding && glBufferSubData && glBindBufferRange &&
-           glDrawElementsInstanced;
+           glDrawElementsInstanced && glVertexAttribDivisor && glDrawArraysInstanced;
 }

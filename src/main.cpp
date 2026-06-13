@@ -404,6 +404,7 @@ void vischeck_worker_thread(VischeckThreadData* data) {
     LocalMapBVH local_bvh;
     ShmPacket local_packet;
     OverlayConfig local_cfg;
+    std::vector<TrajectoryResult> cached_trajectories;
     
     while (true) {
         {
@@ -426,6 +427,7 @@ void vischeck_worker_thread(VischeckThreadData* data) {
                 local_bvh.build();
                 data->map_needs_reload = false;
                 data->pending_map_mesh.Triangles.clear();
+                cached_trajectories.clear();
             }
             
             local_packet = data->current_packet;
@@ -457,17 +459,33 @@ void vischeck_worker_thread(VischeckThreadData* data) {
         }
         
         // 2. In-flight projectile trajectory simulation
+        std::vector<TrajectoryResult> next_cache;
         for (int i = 0; i < local_packet.projectile_count; ++i) {
             const auto& proj = local_packet.projectiles[i];
             if (!proj.active) continue;
             
-            TrajectoryResult traj = simulate_trajectory(proj.initial_position, proj.initial_velocity, proj.type, local_bvh);
-            traj.has_current_pos = true;
+            bool found_cached = false;
+            TrajectoryResult traj;
+            for (const auto& cached_traj : cached_trajectories) {
+                if (cached_traj.entity_handle == proj.entity_handle) {
+                    traj = cached_traj;
+                    found_cached = true;
+                    break;
+                }
+            }
+
+            if (!found_cached) {
+                traj = simulate_trajectory(proj.initial_position, proj.initial_velocity, proj.type, local_bvh);
+                traj.has_current_pos = true;
+                traj.entity_handle = proj.entity_handle;
+                traj.spawn_time = proj.spawn_time;
+            }
+
             traj.current_pos = proj.current_position;
-            traj.entity_handle = proj.entity_handle;
-            traj.spawn_time = proj.spawn_time;
+            next_cache.push_back(traj);
             result.inflight_trajectories.push_back(traj);
         }
+        cached_trajectories = std::move(next_cache);
         
         {
             std::lock_guard<std::mutex> lock(data->mutex);
@@ -932,6 +950,8 @@ int main() {
             float spawn_time = 0.0f;
             TrajectoryResult traj;
             bool still_active = false;
+            double first_seen_time = 0.0;
+            bool uploaded = false;
         };
 
         struct FadingTrajectory {
@@ -942,6 +962,9 @@ int main() {
 
         static std::vector<TrackedTrajectory> tracked_active_trajectories;
         static std::vector<FadingTrajectory> fading_trajectories;
+        static std::vector<uint32_t> detonated_handles;
+
+        double current_real_time = glfwGetTime();
 
         // Mark previously tracked trajectories as inactive
         for (auto& tracked : tracked_active_trajectories) {
@@ -952,12 +975,29 @@ int main() {
         for (const auto& active_traj : render_result.inflight_trajectories) {
             if (!active_traj.valid || active_traj.points.empty()) continue;
 
+            // Check if already detonated
+            bool is_detonated = false;
+            for (uint32_t h : detonated_handles) {
+                if (h == active_traj.entity_handle) {
+                    is_detonated = true;
+                    break;
+                }
+            }
+            if (is_detonated) continue;
+
             bool found = false;
             for (auto& tracked : tracked_active_trajectories) {
-                if (tracked.entity_handle == active_traj.entity_handle && tracked.spawn_time == active_traj.spawn_time) {
+                if (tracked.entity_handle == active_traj.entity_handle) {
                     tracked.traj = active_traj;
                     tracked.still_active = true;
                     found = true;
+
+                    // Check if flight duration has exceeded
+                    if (current_real_time - tracked.first_seen_time >= active_traj.duration) {
+                        // Mark as detonated
+                        detonated_handles.push_back(tracked.entity_handle);
+                        tracked.still_active = false; // This triggers moving it to fading list
+                    }
                     break;
                 }
             }
@@ -967,6 +1007,9 @@ int main() {
                 new_track.spawn_time = active_traj.spawn_time;
                 new_track.traj = active_traj;
                 new_track.still_active = true;
+                new_track.first_seen_time = current_real_time;
+                new_track.uploaded = false;
+
                 tracked_active_trajectories.push_back(new_track);
             }
         }
@@ -981,6 +1024,18 @@ int main() {
                 fading_trajectories.push_back(fading);
             }
         }
+
+        // Clean up detonated handles that are no longer active in inflight_trajectories
+        detonated_handles.erase(
+            std::remove_if(detonated_handles.begin(), detonated_handles.end(),
+                           [](uint32_t handle) {
+                               for (const auto& active : render_result.inflight_trajectories) {
+                                   if (active.entity_handle == handle) return false; // Still active
+                               }
+                               return true; // No longer present, prune it!
+                           }),
+            detonated_handles.end()
+        );
 
         // Remove inactive trajectories from tracked active list
         tracked_active_trajectories.erase(
@@ -1457,31 +1512,30 @@ int main() {
                     esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], cfg.grenade_trajectory_color, cfg.trajectory_thickness);
                 }
                 for (const auto& bounce : traj.bounces) {
-                    float bs = cfg.trajectory_bounce_size;
-                    Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
-                    Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
-                    add_box_3d(esp_renderer, mins, maxs, cfg.trajectory_bounce_color, 1.5f);
+                    esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, cfg.trajectory_bounce_color);
                 }
-                add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color, cfg.trajectory_thickness);
+                esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color);
             }
 
             // C) Draw In-Flight Grenade Trajectories
-            if (cfg.draw_grenade_trajectory && !render_result.inflight_trajectories.empty()) {
-                for (const auto& traj : render_result.inflight_trajectories) {
+            if (cfg.draw_grenade_trajectory && !tracked_active_trajectories.empty()) {
+                for (auto& tracked : tracked_active_trajectories) {
+                    if (!tracked.still_active) continue;
+                    const auto& traj = tracked.traj;
                     if (!traj.valid || traj.points.empty()) continue;
 
-                    for (size_t i = 0; i < traj.points.size() - 1; ++i) {
-                        esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], cfg.grenade_trajectory_color, cfg.trajectory_thickness);
+                    if (!tracked.uploaded) {
+                        esp_renderer.upload_trajectory(tracked.entity_handle, tracked.spawn_time, traj.points, cfg.grenade_trajectory_color);
+                        tracked.uploaded = true;
                     }
+
+                    esp_renderer.draw_gpu_trajectory(tracked.entity_handle, 0.0f, 1.0f);
 
                     // Draw bounce boxes
                     for (const auto& bounce : traj.bounces) {
-                        float bs = cfg.trajectory_bounce_size;
-                        Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
-                        Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
-                        add_box_3d(esp_renderer, mins, maxs, cfg.trajectory_bounce_color, 1.5f);
+                        esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, cfg.trajectory_bounce_color);
                     }
-                    add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color, cfg.trajectory_thickness);
+                    esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color);
                 }
             }
 
@@ -1491,27 +1545,12 @@ int main() {
                     const auto& traj = fading.traj;
                     if (traj.points.empty()) continue;
 
-                    // Calculate point where erasure has reached with sub-segment interpolation
+                    // Calculate point where erasure has reached
                     float float_idx = static_cast<float>(traj.points.size() - 1) * fading.erase_progress;
                     size_t start_idx = static_cast<size_t>(float_idx);
                     if (start_idx >= traj.points.size() - 1) continue;
-                    float frac = float_idx - static_cast<float>(start_idx);
-
-                    const auto& p1 = traj.points[start_idx];
-                    const auto& p2 = traj.points[start_idx + 1];
-                    Vec3 lerped_start = {
-                        p1.x + frac * (p2.x - p1.x),
-                        p1.y + frac * (p2.y - p1.y),
-                        p1.z + frac * (p2.z - p1.z)
-                    };
 
                     // Modulate colors by fade_alpha
-                    float trail_color_mod[4] = {
-                        cfg.grenade_trajectory_color[0],
-                        cfg.grenade_trajectory_color[1],
-                        cfg.grenade_trajectory_color[2],
-                        cfg.grenade_trajectory_color[3] * fading.fade_alpha
-                    };
                     float bounce_color_mod[4] = {
                         cfg.trajectory_bounce_color[0],
                         cfg.trajectory_bounce_color[1],
@@ -1525,41 +1564,20 @@ int main() {
                         cfg.trajectory_detonation_color[3] * fading.fade_alpha
                     };
 
-                    // Draw first partial segment
-                    if (frac < 1.0f) {
-                        esp_renderer.add_line_3d(lerped_start, p2, trail_color_mod, cfg.trajectory_thickness);
-                    }
-
-                    // Draw remaining segments in the modulated trail color
-                    for (size_t i = start_idx + 1; i < traj.points.size() - 1; ++i) {
-                        esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], trail_color_mod, cfg.trajectory_thickness);
-                    }
+                    esp_renderer.draw_gpu_trajectory(traj.entity_handle, fading.erase_progress, fading.fade_alpha);
 
                     // Draw remaining bounce boxes
-                    for (const auto& bounce : traj.bounces) {
-                        size_t closest_pt_idx = 0;
-                        float min_d = 1e9f;
-                        for (size_t idx = 0; idx < traj.points.size(); ++idx) {
-                            float dx = traj.points[idx].x - bounce.x;
-                            float dy = traj.points[idx].y - bounce.y;
-                            float dz = traj.points[idx].z - bounce.z;
-                            float d = dx*dx + dy*dy + dz*dz;
-                            if (d < min_d) {
-                                min_d = d;
-                                closest_pt_idx = idx;
-                            }
-                        }
+                    for (size_t b_idx = 0; b_idx < traj.bounces.size(); ++b_idx) {
+                        const auto& bounce = traj.bounces[b_idx];
+                        size_t closest_pt_idx = (b_idx < traj.bounce_indices.size()) ? traj.bounce_indices[b_idx] : 0;
                         if (closest_pt_idx >= start_idx) {
-                            float bs = cfg.trajectory_bounce_size;
-                            Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
-                            Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
-                            add_box_3d(esp_renderer, mins, maxs, bounce_color_mod, 1.5f);
+                            esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, bounce_color_mod);
                         }
                     }
 
                     // Draw detonation circle if it hasn't been erased yet
                     if (start_idx < traj.points.size() - 1) {
-                        add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, detonation_color_mod, cfg.trajectory_thickness);
+                        esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, detonation_color_mod);
                     }
                 }
             }
@@ -1571,8 +1589,21 @@ int main() {
             }
             glDepthMask(GL_FALSE);
             esp_renderer.flush_lines();
+            esp_renderer.flush_instances();
             glDepthMask(GL_TRUE);
             glEnable(GL_DEPTH_TEST);
+
+            // Prune GPU trajectory buffers that are no longer active or fading
+            std::vector<uint32_t> active_handles;
+            for (const auto& tracked : tracked_active_trajectories) {
+                if (tracked.still_active) {
+                    active_handles.push_back(tracked.entity_handle);
+                }
+            }
+            for (const auto& fading : fading_trajectories) {
+                active_handles.push_back(fading.traj.entity_handle);
+            }
+            esp_renderer.prune_gpu_trajectories(active_handles);
         }
 
         // Render ESP Overlay (Skeleton, Box, Health Bar)

@@ -8,6 +8,7 @@
 struct TrajectoryResult {
     std::vector<Vec3> points;
     std::vector<Vec3> bounces;
+    std::vector<size_t> bounce_indices;
     Vec3 end_pos{0,0,0};
     float duration = 0.0f;
     bool valid = false;
@@ -157,6 +158,22 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
         if ((dx*dx + dy*dy + dz*dz) > 1.0f) {
             result.points.push_back(result.end_pos);
         }
+    }
+
+    for (const auto& bounce : result.bounces) {
+        size_t closest_pt_idx = 0;
+        float min_d = 1e9f;
+        for (size_t idx = 0; idx < result.points.size(); ++idx) {
+            float dx = result.points[idx].x - bounce.x;
+            float dy = result.points[idx].y - bounce.y;
+            float dz = result.points[idx].z - bounce.z;
+            float d = dx*dx + dy*dy + dz*dz;
+            if (d < min_d) {
+                min_d = d;
+                closest_pt_idx = idx;
+            }
+        }
+        result.bounce_indices.push_back(closest_pt_idx);
     }
 
     return result;

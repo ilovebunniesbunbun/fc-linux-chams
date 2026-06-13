@@ -31,6 +31,60 @@ void main() {
 }
 )glsl";
 
+static const char* trajectory_vertex_shader = R"glsl(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec4 aColor;
+layout(location = 2) in float aProgress;
+out vec4 vColor;
+out float vProgress;
+uniform mat4 uProj;
+uniform float uFadeAlpha;
+void main() {
+    gl_Position = uProj * vec4(aPos, 1.0);
+    vColor = vec4(aColor.rgb, aColor.a * uFadeAlpha);
+    vProgress = aProgress;
+}
+)glsl";
+
+static const char* trajectory_fragment_shader = R"glsl(
+#version 330 core
+in vec4 vColor;
+in float vProgress;
+out vec4 fragColor;
+uniform float uEraseProgress;
+void main() {
+    if (vProgress < uEraseProgress) {
+        discard;
+    }
+    fragColor = vColor;
+}
+)glsl";
+
+static const char* instanced_vertex_shader = R"glsl(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aOffset;
+layout(location = 2) in float aSize;
+layout(location = 3) in vec4 aColor;
+out vec4 vColor;
+uniform mat4 uProj;
+void main() {
+    vec3 worldPos = aOffset + aPos * aSize;
+    gl_Position = uProj * vec4(worldPos, 1.0);
+    vColor = aColor;
+}
+)glsl";
+
+static const char* instanced_fragment_shader = R"glsl(
+#version 330 core
+in vec4 vColor;
+out vec4 fragColor;
+void main() {
+    fragColor = vColor;
+}
+)glsl";
+
 static Vec3 catmull_rom_3d(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t) {
     float t2 = t * t;
     float t3 = t2 * t;
@@ -81,6 +135,32 @@ bool EspRenderer::link_program() {
     return true;
 }
 
+bool EspRenderer::link_custom_program(unsigned int& prog_id, const char* vs_src, const char* fs_src) {
+    unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
+    if (!compile_shader(vs, vs_src)) return false;
+
+    unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
+    if (!compile_shader(fs, fs_src)) return false;
+
+    prog_id = glCreateProgram();
+    glAttachShader(prog_id, vs);
+    glAttachShader(prog_id, fs);
+    glLinkProgram(prog_id);
+
+    int success;
+    glGetProgramiv(prog_id, GL_LINK_STATUS, &success);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    if (!success) {
+        char log[512];
+        glGetProgramInfoLog(prog_id, 512, nullptr, log);
+        std::cerr << "ESP_RENDERER: Custom program linking error: " << log << std::endl;
+        return false;
+    }
+    return true;
+}
+
 bool EspRenderer::init() {
     vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     if (!compile_shader(vertex_shader, esp_vertex_shader)) return false;
@@ -105,6 +185,89 @@ bool EspRenderer::init() {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(EspVertex), (void*)(3 * sizeof(float)));
 
+    // Link trajectory program
+    if (!link_custom_program(trajectory_program_id, trajectory_vertex_shader, trajectory_fragment_shader)) return false;
+    loc_traj_proj = glGetUniformLocation(trajectory_program_id, "uProj");
+    loc_traj_erase = glGetUniformLocation(trajectory_program_id, "uEraseProgress");
+    loc_traj_fade = glGetUniformLocation(trajectory_program_id, "uFadeAlpha");
+
+    // Link instanced program
+    if (!link_custom_program(instanced_program_id, instanced_vertex_shader, instanced_fragment_shader)) return false;
+    loc_inst_proj = glGetUniformLocation(instanced_program_id, "uProj");
+
+    // Create static Unit Box VAO/VBO
+    const float unit_box[] = {
+        -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,
+         1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+        -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,
+         1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+        -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,
+         1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,
+         1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f
+    };
+    glGenVertexArrays(1, &unit_box_vao);
+    glGenBuffers(1, &unit_box_vbo);
+    glBindVertexArray(unit_box_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, unit_box_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(unit_box), unit_box, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    // Create static Unit Circle VAO/VBO
+    float unit_circle[48 * 3];
+    constexpr int SEGMENTS = 24;
+    for (int i = 0; i < SEGMENTS; ++i) {
+        float a1 = i * (2.0f * 3.14159265f / SEGMENTS);
+        float a2 = (i + 1) * (2.0f * 3.14159265f / SEGMENTS);
+        unit_circle[i * 6 + 0] = std::cos(a1);
+        unit_circle[i * 6 + 1] = std::sin(a1);
+        unit_circle[i * 6 + 2] = 0.0f;
+        unit_circle[i * 6 + 3] = std::cos(a2);
+        unit_circle[i * 6 + 4] = std::sin(a2);
+        unit_circle[i * 6 + 5] = 0.0f;
+    }
+    glGenVertexArrays(1, &unit_circle_vao);
+    glGenBuffers(1, &unit_circle_vbo);
+    glBindVertexArray(unit_circle_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, unit_circle_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(unit_circle), unit_circle, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    // Create dynamic Instance VBO
+    glGenBuffers(1, &instance_vbo);
+
+    // Bind instance attributes to unit box VAO
+    glBindVertexArray(unit_box_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glVertexAttribDivisor(1, 1);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribDivisor(2, 1);
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(4 * sizeof(float)));
+    glVertexAttribDivisor(3, 1);
+
+    // Bind instance attributes to unit circle VAO
+    glBindVertexArray(unit_circle_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glVertexAttribDivisor(1, 1);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribDivisor(2, 1);
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(4 * sizeof(float)));
+    glVertexAttribDivisor(3, 1);
+
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -113,34 +276,35 @@ bool EspRenderer::init() {
 
 void EspRenderer::cleanup() {
     clear();
-    if (vao) {
-        glDeleteVertexArrays(1, &vao);
-        vao = 0;
+    line_batches.clear();
+    if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
+    if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
+    if (vertex_shader) { glDeleteShader(vertex_shader); vertex_shader = 0; }
+    if (fragment_shader) { glDeleteShader(fragment_shader); fragment_shader = 0; }
+    if (program_id) { glDeleteProgram(program_id); program_id = 0; }
+
+    if (unit_box_vao) { glDeleteVertexArrays(1, &unit_box_vao); unit_box_vao = 0; }
+    if (unit_box_vbo) { glDeleteBuffers(1, &unit_box_vbo); unit_box_vbo = 0; }
+    if (unit_circle_vao) { glDeleteVertexArrays(1, &unit_circle_vao); unit_circle_vao = 0; }
+    if (unit_circle_vbo) { glDeleteBuffers(1, &unit_circle_vbo); unit_circle_vbo = 0; }
+    if (instance_vbo) { glDeleteBuffers(1, &instance_vbo); instance_vbo = 0; }
+    if (trajectory_program_id) { glDeleteProgram(trajectory_program_id); trajectory_program_id = 0; }
+    if (instanced_program_id) { glDeleteProgram(instanced_program_id); instanced_program_id = 0; }
+
+    for (auto& t : gpu_trajectories) {
+        if (t.vao) glDeleteVertexArrays(1, &t.vao);
+        if (t.vbo) glDeleteBuffers(1, &t.vbo);
     }
-    if (vbo) {
-        glDeleteBuffers(1, &vbo);
-        vbo = 0;
-    }
-    if (vertex_shader) {
-        glDeleteShader(vertex_shader);
-        vertex_shader = 0;
-    }
-    if (fragment_shader) {
-        glDeleteShader(fragment_shader);
-        fragment_shader = 0;
-    }
-    if (program_id) {
-        glDeleteProgram(program_id);
-        program_id = 0;
-    }
+    gpu_trajectories.clear();
 }
 
 void EspRenderer::clear() {
     for (auto& p : line_batches) {
         p.second.clear();
     }
-    line_batches.clear();
     triangle_vertices.clear();
+    box_instances.clear();
+    circle_instances.clear();
 }
 
 void EspRenderer::set_projection(const float* proj_matrix) {
@@ -185,35 +349,107 @@ void EspRenderer::add_rect_2d(float x, float y, float w, float h, const float* c
 }
 
 void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const float* color, float thickness, bool draw_outline) {
-    float ix = std::round(x) + 0.5f;
-    float iy = std::round(y) + 0.5f;
+    float ix = std::round(x);
+    float iy = std::round(y);
     float iw = std::round(w);
     float ih = std::round(h);
     float t = std::round(thickness);
     if (t < 1.0f) t = 1.0f;
 
+    float half_t = t * 0.5f;
+
     if (draw_outline) {
         float black[4] = {0.0f, 0.0f, 0.0f, color[3]};
-        // Black outer outline: 1 pixel outside
-        add_line_2d(ix - t, iy - t, ix + iw + t, iy - t, black, 1.0f);
-        add_line_2d(ix + iw + t, iy - t, ix + iw + t, iy + ih + t, black, 1.0f);
-        add_line_2d(ix + iw + t, iy + ih + t, ix - t, iy + ih + t, black, 1.0f);
-        add_line_2d(ix - t, iy + ih + t, ix - t, iy - t, black, 1.0f);
 
-        // Black inner outline: 1 pixel inside
-        if (iw > 2.0f * t && ih > 2.0f * t) {
-            add_line_2d(ix + t, iy + t, ix + iw - t, iy + t, black, 1.0f);
-            add_line_2d(ix + iw - t, iy + t, ix + iw - t, iy + ih - t, black, 1.0f);
-            add_line_2d(ix + iw - t, iy + ih - t, ix + t, iy + ih - t, black, 1.0f);
-            add_line_2d(ix + t, iy + ih - t, ix + t, iy + t, black, 1.0f);
+        // Outer outline quads (thickness 1.0f)
+        // Top outer:
+        add_quad_2d(ix - half_t - 1.0f, iy - half_t - 1.0f,
+                    ix + iw + half_t + 1.0f, iy - half_t - 1.0f,
+                    ix + iw + half_t + 1.0f, iy - half_t,
+                    ix - half_t - 1.0f, iy - half_t,
+                    black);
+
+        // Bottom outer:
+        add_quad_2d(ix - half_t - 1.0f, iy + ih + half_t,
+                    ix + iw + half_t + 1.0f, iy + ih + half_t,
+                    ix + iw + half_t + 1.0f, iy + ih + half_t + 1.0f,
+                    ix - half_t - 1.0f, iy + ih + half_t + 1.0f,
+                    black);
+
+        // Left outer:
+        add_quad_2d(ix - half_t - 1.0f, iy - half_t,
+                    ix - half_t, iy - half_t,
+                    ix - half_t, iy + ih + half_t,
+                    ix - half_t - 1.0f, iy + ih + half_t,
+                    black);
+
+        // Right outer:
+        add_quad_2d(ix + iw + half_t, iy - half_t,
+                    ix + iw + half_t + 1.0f, iy - half_t,
+                    ix + iw + half_t + 1.0f, iy + ih + half_t,
+                    ix + iw + half_t, iy + ih + half_t,
+                    black);
+
+        // Inner outline quads (thickness 1.0f)
+        if (iw > t + 2.0f && ih > t + 2.0f) {
+            // Top inner:
+            add_quad_2d(ix + half_t, iy + half_t,
+                        ix + iw - half_t, iy + half_t,
+                        ix + iw - half_t, iy + half_t + 1.0f,
+                        ix + half_t, iy + half_t + 1.0f,
+                        black);
+
+            // Bottom inner:
+            add_quad_2d(ix + half_t, iy + ih - half_t - 1.0f,
+                        ix + iw - half_t, iy + ih - half_t - 1.0f,
+                        ix + iw - half_t, iy + ih - half_t,
+                        ix + half_t, iy + ih - half_t,
+                        black);
+
+            // Left inner:
+            add_quad_2d(ix + half_t, iy + half_t + 1.0f,
+                        ix + half_t + 1.0f, iy + half_t + 1.0f,
+                        ix + half_t + 1.0f, iy + ih - half_t - 1.0f,
+                        ix + half_t, iy + ih - half_t - 1.0f,
+                        black);
+
+            // Right inner:
+            add_quad_2d(ix + iw - half_t - 1.0f, iy + half_t + 1.0f,
+                        ix + iw - half_t, iy + half_t + 1.0f,
+                        ix + iw - half_t, iy + ih - half_t - 1.0f,
+                        ix + iw - half_t - 1.0f, iy + ih - half_t - 1.0f,
+                        black);
         }
     }
 
-    // Main box
-    add_line_2d(ix, iy, ix + iw, iy, color, t);
-    add_line_2d(ix + iw, iy, ix + iw, iy + ih, color, t);
-    add_line_2d(ix + iw, iy + ih, ix, iy + ih, color, t);
-    add_line_2d(ix, iy + ih, ix, iy, color, t);
+    // Main box quads (thickness t)
+    // Top main:
+    add_quad_2d(ix - half_t, iy - half_t,
+                ix + iw + half_t, iy - half_t,
+                ix + iw + half_t, iy + half_t,
+                ix - half_t, iy + half_t,
+                color);
+
+    // Bottom main:
+    add_quad_2d(ix - half_t, iy + ih - half_t,
+                ix + iw + half_t, iy + ih - half_t,
+                ix + iw + half_t, iy + ih + half_t,
+                ix - half_t, iy + ih + half_t,
+                color);
+
+    // Left main:
+    add_quad_2d(ix - half_t, iy + half_t,
+                ix + half_t, iy + half_t,
+                ix + half_t, iy + ih - half_t,
+                ix - half_t, iy + ih - half_t,
+                color);
+
+    // Right main:
+    add_quad_2d(ix + iw - half_t, iy + half_t,
+                ix + iw + half_t, iy + half_t,
+                ix + iw + half_t, iy + ih - half_t,
+                ix + iw - half_t, iy + ih - half_t,
+                color);
 }
 
 void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float health, const OverlayConfig& cfg) {
@@ -256,6 +492,50 @@ void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float he
 }
 
 void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color, float thickness) {
+    constexpr float EPSILON = 0.05f; // Near plane clip threshold in homogeneous coordinates
+
+    // Use column-major indexing since current_proj (gl_vp) is column-major
+    float w1 = current_proj[3] * p1.x + current_proj[7] * p1.y + current_proj[11] * p1.z + current_proj[15];
+    float w2 = current_proj[3] * p2.x + current_proj[7] * p2.y + current_proj[11] * p2.z + current_proj[15];
+
+    // 1. Cull if both are behind near plane
+    if (w1 < EPSILON && w2 < EPSILON) return;
+
+    Vec3 clip_p1 = p1;
+    Vec3 clip_p2 = p2;
+
+    // 2. Near-plane clipping
+    if (w1 < EPSILON) {
+        float t = (EPSILON - w1) / (w2 - w1);
+        clip_p1 = {
+            p1.x + t * (p2.x - p1.x),
+            p1.y + t * (p2.y - p1.y),
+            p1.z + t * (p2.z - p1.z)
+        };
+        w1 = EPSILON;
+    } else if (w2 < EPSILON) {
+        float t = (EPSILON - w2) / (w1 - w2);
+        clip_p2 = {
+            p2.x + t * (p1.x - p2.x),
+            p2.y + t * (p1.y - p2.y),
+            p2.z + t * (p1.z - p2.z)
+        };
+        w2 = EPSILON;
+    }
+
+    // 3. Frustum culling (only check if both are in front of the camera, which is guaranteed now)
+    float x1 = current_proj[0] * clip_p1.x + current_proj[4] * clip_p1.y + current_proj[8] * clip_p1.z + current_proj[12];
+    float x2 = current_proj[0] * clip_p2.x + current_proj[4] * clip_p2.y + current_proj[8] * clip_p2.z + current_proj[12];
+
+    if (x1 < -w1 && x2 < -w2) return;
+    if (x1 > w1 && x2 > w2) return;
+
+    float y1 = current_proj[1] * clip_p1.x + current_proj[5] * clip_p1.y + current_proj[9] * clip_p1.z + current_proj[13];
+    float y2 = current_proj[1] * clip_p2.x + current_proj[5] * clip_p2.y + current_proj[9] * clip_p2.z + current_proj[13];
+
+    if (y1 < -w1 && y2 < -w2) return;
+    if (y1 > w1 && y2 > w2) return;
+
     std::vector<EspVertex>* batch = nullptr;
     for (auto& p : line_batches) {
         if (p.first == thickness) { batch = &p.second; break; }
@@ -264,8 +544,8 @@ void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color
         line_batches.emplace_back(thickness, std::vector<EspVertex>{});
         batch = &line_batches.back().second;
     }
-    batch->push_back({p1.x, p1.y, p1.z, color[0], color[1], color[2], color[3]});
-    batch->push_back({p2.x, p2.y, p2.z, color[0], color[1], color[2], color[3]});
+    batch->push_back({clip_p1.x, clip_p1.y, clip_p1.z, color[0], color[1], color[2], color[3]});
+    batch->push_back({clip_p2.x, clip_p2.y, clip_p2.z, color[0], color[1], color[2], color[3]});
 }
 
 void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_positions, const std::vector<int>& chain, const std::vector<float>& vis, int player_idx, const OverlayConfig& cfg, bool for_glow, float pulse_factor, const float* override_glow_color) {
@@ -473,4 +753,127 @@ void EspRenderer::flush_triangles() {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glUseProgram(0);
+}
+
+void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std::vector<Vec3>& points, const float* color) {
+    if (points.empty()) return;
+
+    std::vector<TrajectoryVertex> vertices;
+    vertices.reserve(points.size());
+
+    for (size_t i = 0; i < points.size(); ++i) {
+        float progress = points.size() > 1 ? static_cast<float>(i) / (points.size() - 1) : 1.0f;
+        vertices.push_back({
+            points[i].x, points[i].y, points[i].z,
+            color[0], color[1], color[2], color[3],
+            progress
+        });
+    }
+
+    GpuTrajectory traj;
+    traj.entity_handle = handle;
+    traj.spawn_time = spawn_time;
+    traj.vertex_count = points.size();
+
+    glGenVertexArrays(1, &traj.vao);
+    glGenBuffers(1, &traj.vbo);
+
+    glBindVertexArray(traj.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, traj.vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(TrajectoryVertex), vertices.data(), GL_STATIC_DRAW);
+
+    // Attribute 0: Position
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TrajectoryVertex), (void*)0);
+
+    // Attribute 1: Color
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(TrajectoryVertex), (void*)(3 * sizeof(float)));
+
+    // Attribute 2: Progress
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(TrajectoryVertex), (void*)(7 * sizeof(float)));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    gpu_trajectories.push_back(traj);
+}
+
+void EspRenderer::draw_gpu_trajectory(uint32_t handle, float erase_progress, float fade_alpha) {
+    for (const auto& traj : gpu_trajectories) {
+        if (traj.entity_handle == handle) {
+            glUseProgram(trajectory_program_id);
+            glUniformMatrix4fv(loc_traj_proj, 1, GL_FALSE, current_proj);
+            glUniform1f(loc_traj_erase, erase_progress);
+            glUniform1f(loc_traj_fade, fade_alpha);
+
+            glBindVertexArray(traj.vao);
+            glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)traj.vertex_count);
+
+            glBindVertexArray(0);
+            glUseProgram(0);
+            break;
+        }
+    }
+}
+
+void EspRenderer::prune_gpu_trajectories(const std::vector<uint32_t>& active_handles) {
+    std::vector<GpuTrajectory> next_gpu_trajectories;
+    for (auto& traj : gpu_trajectories) {
+        bool still_needed = false;
+        for (uint32_t h : active_handles) {
+            if (h == traj.entity_handle) {
+                still_needed = true;
+                break;
+            }
+        }
+        if (still_needed) {
+            next_gpu_trajectories.push_back(traj);
+        } else {
+            if (traj.vao) glDeleteVertexArrays(1, &traj.vao);
+            if (traj.vbo) glDeleteBuffers(1, &traj.vbo);
+        }
+    }
+    gpu_trajectories = std::move(next_gpu_trajectories);
+}
+
+void EspRenderer::add_box_instance(const Vec3& center, float size, const float* color) {
+    box_instances.push_back({center, size, {color[0], color[1], color[2], color[3]}});
+}
+
+void EspRenderer::add_circle_instance(const Vec3& center, float radius, const float* color) {
+    circle_instances.push_back({center, radius, {color[0], color[1], color[2], color[3]}});
+}
+
+void EspRenderer::flush_instances() {
+    if (box_instances.empty() && circle_instances.empty()) return;
+
+    glUseProgram(instanced_program_id);
+    glUniformMatrix4fv(loc_inst_proj, 1, GL_FALSE, current_proj);
+
+    // 1. Draw Instanced Boxes
+    if (!box_instances.empty()) {
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+        glBufferData(GL_ARRAY_BUFFER, box_instances.size() * sizeof(BoxInstance), box_instances.data(), GL_STREAM_DRAW);
+
+        glBindVertexArray(unit_box_vao);
+        glDrawArraysInstanced(GL_LINES, 0, 24, (GLsizei)box_instances.size());
+    }
+
+    // 2. Draw Instanced Circles
+    if (!circle_instances.empty()) {
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+        glBufferData(GL_ARRAY_BUFFER, circle_instances.size() * sizeof(CircleInstance), circle_instances.data(), GL_STREAM_DRAW);
+
+        glBindVertexArray(unit_circle_vao);
+        glDrawArraysInstanced(GL_LINES, 0, 48, (GLsizei)circle_instances.size());
+    }
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUseProgram(0);
+
+    box_instances.clear();
+    circle_instances.clear();
 }
