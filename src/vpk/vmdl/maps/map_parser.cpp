@@ -201,6 +201,21 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
         const auto* attr = collision_attrs_root->get(idx);
         if (!attr || !attr->is_object()) return false;
 
+        // Skip skybox and player clips that should not interact with grenades/physics
+        const auto* interact_as = get_first(attr, { "m_InteractAsStrings", "m_interactAsStrings" });
+        if (interact_as && interact_as->is_array()) {
+            for (size_t i = 0; i < interact_as->size(); ++i) {
+                const auto* val = interact_as->get(i);
+                if (val && val->is_string()) {
+                    std::string tag = val->as_string();
+                    std::transform(tag.begin(), tag.end(), tag.begin(), ::tolower);
+                    if (tag == "sky" || tag == "playerclip" || tag == "npcclip") {
+                        return true;
+                    }
+                }
+            }
+        }
+
         const auto* collision_group = get_first(attr, { "m_CollisionGroupString", "m_collisionGroupString" });
         if (!collision_group || !collision_group->is_string()) return false;
 
@@ -208,7 +223,9 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
 
         std::string group_lower = group_str;
         std::transform(group_lower.begin(), group_lower.end(), group_lower.begin(), ::tolower);
-        return group_lower != "default";
+        return (group_lower != "default" && 
+                group_lower != "conditionallysolid" && 
+                group_lower != "collision_group_debris_block_projectile");
     };
 
     const auto* parts = get_first(&*kv_opt, {"m_parts", "m_Parts", "parts", "Parts"});

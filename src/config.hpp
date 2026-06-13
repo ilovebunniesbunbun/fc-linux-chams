@@ -2,6 +2,16 @@
 #include <string>
 #include <vector>
 
+struct GpuDevice {
+    std::string name;
+    std::string vendor_id;
+    std::string device_id;
+    std::string driver;
+    std::string display_name;
+};
+
+std::vector<GpuDevice> detect_gpus();
+
 struct OverlayConfig {
     int monitor_w = 2560;
     int monitor_h = 1440;
@@ -21,6 +31,8 @@ struct OverlayConfig {
     bool show_invisible = true;
     std::string maps_dir = "./maps";
     bool hyprland_support = false;
+    int monitor_index = 0;
+    std::string gpu_preference = "default";
 
     // V2 parameters
     std::string vpk_path = "auto";
@@ -76,6 +88,17 @@ struct OverlayConfig {
     bool map_visualizer_enabled = false;
     bool map_visualizer_depth_tested = true;
     float map_visualizer_color[4] = {0.0f, 0.784f, 0.392f, 0.47f};
+
+    // V3 parameters (Grenade)
+    bool draw_grenade_trajectory = true;
+    float grenade_trajectory_color[4] = {0.67f, 0.69f, 0.86f, 0.8f};
+    float trajectory_bounce_color[4] = {0.76f, 0.78f, 0.84f, 1.0f};
+    float trajectory_detonation_color[4] = {0.55f, 0.59f, 0.92f, 1.0f};
+    float trajectory_thickness = 2.0f;
+    float trajectory_bounce_size = 2.0f;
+    float trajectory_detonation_radius = 15.0f;
+    float trajectory_fade_time = 1.5f;
+    bool trajectory_show_through_walls = false;
 };
 
 OverlayConfig load_config(const std::string& filename);

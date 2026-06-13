@@ -52,7 +52,7 @@ private:
     int loc_use_override = -1;
 
     // We store line vertices grouped by line thickness
-    std::map<float, std::vector<EspVertex>> line_batches;
+    std::vector<std::pair<float, std::vector<EspVertex>>> line_batches;
     std::vector<EspVertex> triangle_vertices;
 
     float current_proj[16];

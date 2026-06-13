@@ -371,51 +371,263 @@ struct Vec2 {
 
 #include "esp_drawing.hpp"
 #include "renderer/esp_renderer.hpp"
+#include "vischeck/bvh_parser.hpp"
+#include "vischeck/trajectory_sim.hpp"
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+
+struct VischeckResult {
+    TrajectoryResult held_trajectory;
+    std::vector<TrajectoryResult> inflight_trajectories;
+};
+
+struct VischeckThreadData {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool quit = false;
+    bool has_work = false;
+    
+    // Inputs
+    ShmPacket current_packet;
+    MapParser::MapMesh pending_map_mesh;
+    bool map_needs_reload = false;
+    OverlayConfig cfg;
+    
+    // Outputs
+    VischeckResult latest_result;
+    bool has_new_result = false;
+};
+
+// Background worker thread executing heavy raytrace and physics simulation
+void vischeck_worker_thread(VischeckThreadData* data) {
+    LocalMapBVH local_bvh;
+    ShmPacket local_packet;
+    OverlayConfig local_cfg;
+    
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(data->mutex);
+            data->cv.wait(lock, [data]() { return data->quit || data->has_work; });
+            
+            if (data->quit) {
+                break;
+            }
+            
+            if (data->map_needs_reload) {
+                local_bvh.triangles.clear();
+                for (const auto& tri : data->pending_map_mesh.Triangles) {
+                    LocalMapBVH::Triangle t;
+                    t.v0 = { tri.v0.x, tri.v0.y, tri.v0.z };
+                    t.v1 = { tri.v1.x, tri.v1.y, tri.v1.z };
+                    t.v2 = { tri.v2.x, tri.v2.y, tri.v2.z };
+                    local_bvh.triangles.push_back(t);
+                }
+                local_bvh.build();
+                data->map_needs_reload = false;
+                data->pending_map_mesh.Triangles.clear();
+            }
+            
+            local_packet = data->current_packet;
+            local_cfg = data->cfg;
+            data->has_work = false;
+        }
+        
+        VischeckResult result;
+        
+        // 1. Local player held grenade trajectory simulation
+        if (local_packet.held_grenade_type != GRENADE_NONE && local_packet.pin_pulled) {
+            Vec3 forward = extract_forward_vector(local_packet.view_matrix);
+            float clamped = std::max(15.0f, std::min(750.0f, 750.0f * 0.9f));
+            float speed = (local_packet.throw_strength * 0.7f + 0.3f) * clamped;
+            
+            Vec3 origin = {
+                local_packet.local_eye.x + forward.x * 16.0f,
+                local_packet.local_eye.y + forward.y * 16.0f,
+                local_packet.local_eye.z + forward.z * 16.0f + local_packet.throw_strength * 12.0f - 12.0f
+            };
+            
+            Vec3 velocity = {
+                forward.x * speed + local_packet.local_velocity.x * 1.25f,
+                forward.y * speed + local_packet.local_velocity.y * 1.25f,
+                forward.z * speed + local_packet.local_velocity.z * 1.25f
+            };
+            
+            result.held_trajectory = simulate_trajectory(origin, velocity, local_packet.held_grenade_type, local_bvh);
+        }
+        
+        // 2. In-flight projectile trajectory simulation
+        for (int i = 0; i < local_packet.projectile_count; ++i) {
+            const auto& proj = local_packet.projectiles[i];
+            if (!proj.active) continue;
+            
+            TrajectoryResult traj = simulate_trajectory(proj.initial_position, proj.initial_velocity, proj.type, local_bvh);
+            traj.has_current_pos = true;
+            traj.current_pos = proj.current_position;
+            traj.entity_handle = proj.entity_handle;
+            traj.spawn_time = proj.spawn_time;
+            result.inflight_trajectories.push_back(traj);
+        }
+        
+        {
+            std::lock_guard<std::mutex> lock(data->mutex);
+            data->latest_result = std::move(result);
+            data->has_new_result = true;
+        }
+    }
+}
+
+// Draw 3D wireframe box using EspRenderer
+inline void add_box_3d(EspRenderer& renderer, const Vec3& mins, const Vec3& maxs, const float* color, float thickness = 1.0f) {
+    Vec3 v0 = { mins.x, mins.y, mins.z };
+    Vec3 v1 = { maxs.x, mins.y, mins.z };
+    Vec3 v2 = { maxs.x, maxs.y, mins.z };
+    Vec3 v3 = { mins.x, maxs.y, mins.z };
+    Vec3 v4 = { mins.x, mins.y, maxs.z };
+    Vec3 v5 = { maxs.x, mins.y, maxs.z };
+    Vec3 v6 = { maxs.x, maxs.y, maxs.z };
+    Vec3 v7 = { mins.x, maxs.y, maxs.z };
+
+    renderer.add_line_3d(v0, v1, color, thickness);
+    renderer.add_line_3d(v1, v2, color, thickness);
+    renderer.add_line_3d(v2, v3, color, thickness);
+    renderer.add_line_3d(v3, v0, color, thickness);
+
+    renderer.add_line_3d(v4, v5, color, thickness);
+    renderer.add_line_3d(v5, v6, color, thickness);
+    renderer.add_line_3d(v6, v7, color, thickness);
+    renderer.add_line_3d(v7, v4, color, thickness);
+
+    renderer.add_line_3d(v0, v4, color, thickness);
+    renderer.add_line_3d(v1, v5, color, thickness);
+    renderer.add_line_3d(v2, v6, color, thickness);
+    renderer.add_line_3d(v3, v7, color, thickness);
+}
+
+// Draw 3D flat circle projected on ground using EspRenderer
+inline void add_circle_3d(EspRenderer& renderer, const Vec3& center, float radius, const float* color, float thickness = 1.0f) {
+    constexpr int SEGMENTS = 24;
+    Vec3 prev_point = { center.x + radius, center.y, center.z };
+    for (int i = 1; i <= SEGMENTS; ++i) {
+        float angle = i * (2.0f * 3.14159265f / SEGMENTS);
+        Vec3 new_point = { center.x + radius * std::cos(angle), center.y + radius * std::sin(angle), center.z };
+        renderer.add_line_3d(prev_point, new_point, color, thickness);
+        prev_point = new_point;
+    }
+}
 
 int main() {
     std::cout << "FC2 CHAMS V2: Launching GPU-Skinned Linux Overlay..." << std::endl;
 
     OverlayConfig cfg = load_config("overlay.json");
+
+    // Apply GPU offload settings before GLFW/OpenGL driver initialization
+    if (cfg.gpu_preference != "default" && !cfg.gpu_preference.empty()) {
+        std::vector<GpuDevice> gpus = detect_gpus();
+        const GpuDevice* selected_gpu = nullptr;
+        for (const auto& gpu : gpus) {
+            if (gpu.name == cfg.gpu_preference) {
+                selected_gpu = &gpu;
+                break;
+            }
+        }
+        if (selected_gpu) {
+            std::cout << "FC2 CHAMS V2: Applying GPU preference: " << selected_gpu->display_name << std::endl;
+            if (selected_gpu->vendor_id == "0x10de" || selected_gpu->vendor_id == "10de" || selected_gpu->driver == "nvidia") {
+                setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 1);
+                setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 1);
+                setenv("__VK_LAYER_NV_optimus", "NVIDIA_only", 1);
+                unsetenv("DRI_PRIME");
+            } else {
+                // AMD / Intel offload via DRI_PRIME
+                setenv("DRI_PRIME", selected_gpu->name.c_str(), 1);
+                unsetenv("__NV_PRIME_RENDER_OFFLOAD");
+                unsetenv("__GLX_VENDOR_LIBRARY_NAME");
+                unsetenv("__VK_LAYER_NV_optimus");
+            }
+        }
+    } else {
+        // Clear offload environment variables for default setting
+        unsetenv("__NV_PRIME_RENDER_OFFLOAD");
+        unsetenv("__GLX_VENDOR_LIBRARY_NAME");
+        unsetenv("__VK_LAYER_NV_optimus");
+        unsetenv("DRI_PRIME");
+    }
+
+    // Initialize GLFW early to discover monitors
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+    if (!glfwInit()) {
+        std::cerr << "FC2 CHAMS V2: Failed to initialize GLFW for monitor discovery." << std::endl;
+        return 1;
+    }
+
     AgentParser::SetCustomVpkPath(cfg.vpk_path);
     std::cout << "FC2 CHAMS V2: Loaded config: monitor=" << cfg.monitor_w << "x" << cfg.monitor_h
               << " game=" << cfg.game_w << "x" << cfg.game_h
               << " scaling=" << cfg.scaling 
               << " fps=" << cfg.fps 
-              << " show_fps=" << (cfg.show_fps ? "true" : "false") << std::endl;
+              << " show_fps=" << (cfg.show_fps ? "true" : "false")
+              << " monitor_index=" << cfg.monitor_index
+              << " gpu_preference=" << cfg.gpu_preference << std::endl;
 
-    int width = cfg.monitor_w;
-    int height = cfg.monitor_h;
-    int x = 0;
-    int y = 0;
+    int monitor_w = cfg.monitor_w;
+    int monitor_h = cfg.monitor_h;
+    int offset_x = 0;
+    int offset_y = 0;
+
+    int monitor_count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&monitor_count);
+    if (monitors && monitor_count > 0) {
+        int target_idx = cfg.monitor_index;
+        if (target_idx < 0 || target_idx >= monitor_count) {
+            target_idx = 0;
+        }
+        GLFWmonitor* monitor = monitors[target_idx];
+        glfwGetMonitorPos(monitor, &offset_x, &offset_y);
+        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+        if (mode) {
+            monitor_w = mode->width;
+            monitor_h = mode->height;
+        }
+        std::cout << "FC2 CHAMS V2: Target monitor [" << target_idx << "] (" 
+                  << glfwGetMonitorName(monitor) << ") size: " 
+                  << monitor_w << "x" << monitor_h << " pos: (" 
+                  << offset_x << ", " << offset_y << ")" << std::endl;
+    }
+
+    int width = monitor_w;
+    int height = monitor_h;
+    int x = offset_x;
+    int y = offset_y;
 
     if (cfg.scaling == "centered") {
-        float monitor_aspect = (float)cfg.monitor_w / cfg.monitor_h;
+        float monitor_aspect = (float)monitor_w / monitor_h;
         float game_aspect = (float)cfg.game_w / cfg.game_h;
         if (game_aspect < monitor_aspect) {
-            height = cfg.monitor_h;
-            width = (int)(cfg.monitor_h * game_aspect);
-            x = (cfg.monitor_w - width) / 2;
-            y = 0;
+            height = monitor_h;
+            width = (int)(monitor_h * game_aspect);
+            x = offset_x + (monitor_w - width) / 2;
+            y = offset_y;
         } else {
-            width = cfg.monitor_w;
-            height = (int)(cfg.monitor_w / game_aspect);
-            x = 0;
-            y = (cfg.monitor_h - height) / 2;
+            width = monitor_w;
+            height = (int)(monitor_w / game_aspect);
+            x = offset_x;
+            y = offset_y + (monitor_h - height) / 2;
         }
     } else if (cfg.scaling == "custom") {
         width = cfg.game_w;
         height = cfg.game_h;
-        x = cfg.game_x;
-        y = cfg.game_y;
+        x = offset_x + cfg.game_x;
+        y = offset_y + cfg.game_y;
     } else {
         // stretched
-        width = cfg.monitor_w;
-        height = cfg.monitor_h;
-        x = 0;
-        y = 0;
+        width = monitor_w;
+        height = monitor_h;
+        x = offset_x;
+        y = offset_y;
     }
 
-    if (width == cfg.monitor_w && height == cfg.monitor_h) {
+    if (width == monitor_w && height == monitor_h) {
         height -= 1;
     }
 
@@ -460,6 +672,9 @@ int main() {
         return 1;
     }
 
+    VischeckThreadData worker_data;
+    std::thread worker_thread(vischeck_worker_thread, &worker_data);
+
     ShmPacket packet;
     std::string current_map = "";
 
@@ -501,6 +716,17 @@ int main() {
             map_loading = false;
             if (result.mesh.Valid && !result.mesh.Triangles.empty()) {
                 depth_prepass.upload_geometry(result.mesh.Triangles);
+                
+                // Signal worker thread to reload map geometry for BVH checks
+                {
+                    std::lock_guard<std::mutex> lock(worker_data.mutex);
+                    worker_data.pending_map_mesh = result.mesh;
+                    worker_data.map_needs_reload = true;
+                    worker_data.cfg = cfg;
+                    worker_data.has_work = true;
+                }
+                worker_data.cv.notify_one();
+                
                 std::cout << "FC2 CHAMS V2: Async map geometry loaded (" << result.mesh.Triangles.size() << " triangles)." << std::endl;
             } else {
                 std::cout << "FC2 CHAMS V2: Async map geometry unavailable, clearing GPU prepass." << std::endl;
@@ -519,12 +745,24 @@ int main() {
         auto ipc_end = std::chrono::high_resolution_clock::now();
         double current_ipc_ms = std::chrono::duration<double, std::milli>(ipc_end - ipc_start).count();
 
+
+
+
         if (!has_new_packet) {
             std::this_thread::sleep_for(std::chrono::microseconds(500));
         }
 
         if (has_new_packet) {
             packet_count_since_print++;
+            
+            // Post new packet data to worker thread
+            {
+                std::lock_guard<std::mutex> lock(worker_data.mutex);
+                worker_data.current_packet = packet;
+                worker_data.cfg = cfg;
+                worker_data.has_work = true;
+            }
+            worker_data.cv.notify_one();
             if (first_packet) {
                 std::cout << "FC2 CHAMS V2: Shared memory bridge communication active." << std::endl;
                 first_packet = false;
@@ -678,9 +916,107 @@ int main() {
         static std::vector<int> sorted_player_indices;
         static std::vector<float> dummy_vis;
 
+        // Fetch latest results from worker thread
+        static VischeckResult render_result;
+        {
+            std::lock_guard<std::mutex> lock(worker_data.mutex);
+            if (worker_data.has_new_result) {
+                render_result = std::move(worker_data.latest_result);
+                worker_data.has_new_result = false;
+            }
+        }
+
+
+        struct TrackedTrajectory {
+            uint32_t entity_handle = 0;
+            float spawn_time = 0.0f;
+            TrajectoryResult traj;
+            bool still_active = false;
+        };
+
+        struct FadingTrajectory {
+            TrajectoryResult traj;
+            float fade_alpha = 1.0f;
+            float erase_progress = 0.0f;
+        };
+
+        static std::vector<TrackedTrajectory> tracked_active_trajectories;
+        static std::vector<FadingTrajectory> fading_trajectories;
+
+        // Mark previously tracked trajectories as inactive
+        for (auto& tracked : tracked_active_trajectories) {
+            tracked.still_active = false;
+        }
+
+        // Match active trajectories and update tracked active list
+        for (const auto& active_traj : render_result.inflight_trajectories) {
+            if (!active_traj.valid || active_traj.points.empty()) continue;
+
+            bool found = false;
+            for (auto& tracked : tracked_active_trajectories) {
+                if (tracked.entity_handle == active_traj.entity_handle && tracked.spawn_time == active_traj.spawn_time) {
+                    tracked.traj = active_traj;
+                    tracked.still_active = true;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                TrackedTrajectory new_track;
+                new_track.entity_handle = active_traj.entity_handle;
+                new_track.spawn_time = active_traj.spawn_time;
+                new_track.traj = active_traj;
+                new_track.still_active = true;
+                tracked_active_trajectories.push_back(new_track);
+            }
+        }
+
+        // Move newly inactive trajectories to the fading list
+        for (const auto& tracked : tracked_active_trajectories) {
+            if (!tracked.still_active) {
+                FadingTrajectory fading;
+                fading.traj = tracked.traj;
+                fading.fade_alpha = 1.0f;
+                fading.erase_progress = 0.0f;
+                fading_trajectories.push_back(fading);
+            }
+        }
+
+        // Remove inactive trajectories from tracked active list
+        tracked_active_trajectories.erase(
+            std::remove_if(tracked_active_trajectories.begin(), tracked_active_trajectories.end(),
+                           [](const TrackedTrajectory& t) { return !t.still_active; }),
+            tracked_active_trajectories.end()
+        );
+
+        // Update fading/erasure state of fading trajectories
+        float fade_speed = 1.0f / (cfg.trajectory_fade_time > 0.05f ? cfg.trajectory_fade_time : 1.5f);
+        for (auto& fading : fading_trajectories) {
+            fading.fade_alpha -= dt * fade_speed;
+            fading.erase_progress += dt * fade_speed;
+        }
+
+        // Remove fully faded/erased trajectories
+        fading_trajectories.erase(
+            std::remove_if(fading_trajectories.begin(), fading_trajectories.end(),
+                           [](const FadingTrajectory& f) { return f.fade_alpha <= 0.0f || f.erase_progress >= 1.0f; }),
+            fading_trajectories.end()
+        );
+
+        // Persistent scratch buffers to avoid per-player heap allocations
+        static std::vector<source2::Mat3x4> world_bones_buf;
+        static std::vector<source2::Mat3x4> skinning_palette_buf;
+        static std::vector<Vec3> sanitized_bones_buf;
+        // Static batch buffer: max 64 players * 128 bones * 16 floats per mat4
+        static std::vector<float> batch_bones;
+
         auto cpu_start = std::chrono::high_resolution_clock::now();
         if (has_new_packet) {
-            dummy_vis.assign(packet.player_count * 128, 1.0f);
+            // Only grow dummy_vis, never shrink; fill with 1.0f
+            size_t needed_vis = static_cast<size_t>(packet.player_count) * 128;
+            if (dummy_vis.size() < needed_vis) {
+                dummy_vis.assign(needed_vis, 1.0f);
+            }
 
             render_palettes.resize(packet.player_count);
             for (int i = 0; i < packet.player_count; ++i) {
@@ -701,49 +1037,50 @@ int main() {
                     continue;
                 }
 
-                // Convert raw bone transforms to 3x4 world matrices
-                std::vector<source2::Mat3x4> world_bones(model->mesh.bone_count);
-                for (int j = 0; j < model->mesh.bone_count; ++j) {
+                // Convert raw bone transforms to 3x4 world matrices (reuse static buffer)
+                const int bc = model->mesh.bone_count;
+                world_bones_buf.resize(bc);
+                for (int j = 0; j < bc; ++j) {
                     if (j < player.bone_count) {
-                        world_bones[j] = matrix_from_bone(player.bones[j].position, player.bones[j].rotation);
+                        world_bones_buf[j] = matrix_from_bone(player.bones[j].position, player.bones[j].rotation);
                     } else {
                         source2::Mat3x4 identity{};
                         identity.mat[0][0] = identity.mat[1][1] = identity.mat[2][2] = 1.0f;
-                        world_bones[j] = identity;
+                        world_bones_buf[j] = identity;
                     }
                 }
 
                 // Sanitise bones for LOD issues
-                sanitize_lod_bones(world_bones.data(), model->mesh.bone_count, model->mesh);
+                sanitize_lod_bones(world_bones_buf.data(), bc, model->mesh);
 
-                // Extract sanitized world positions for ESP logic (fixes game LOD issues)
-                std::vector<Vec3> sanitized_bones(model->mesh.bone_count);
-                for (int j = 0; j < model->mesh.bone_count; ++j) {
-                    sanitized_bones[j] = {
-                        world_bones[j].mat[0][3],
-                        world_bones[j].mat[1][3],
-                        world_bones[j].mat[2][3]
+                // Extract sanitized world positions for ESP logic (reuse static buffer)
+                sanitized_bones_buf.resize(bc);
+                for (int j = 0; j < bc; ++j) {
+                    sanitized_bones_buf[j] = {
+                        world_bones_buf[j].mat[0][3],
+                        world_bones_buf[j].mat[1][3],
+                        world_bones_buf[j].mat[2][3]
                     };
                 }
 
-                // Multiply by inverse bind poses to build final skinned joint palette
-                std::vector<source2::Mat3x4> skinning_palette(model->mesh.bone_count);
-                for (int j = 0; j < model->mesh.bone_count; ++j) {
+                // Multiply by inverse bind poses to build final skinned joint palette (reuse static buffer)
+                skinning_palette_buf.resize(bc);
+                for (int j = 0; j < bc; ++j) {
                     if (j < static_cast<int>(model->mesh.inv_bind_poses.size())) {
-                        skinning_palette[j] = multiply_3x4(world_bones[j], model->mesh.inv_bind_poses[j]);
+                        skinning_palette_buf[j] = multiply_3x4(world_bones_buf[j], model->mesh.inv_bind_poses[j]);
                     } else {
-                        skinning_palette[j] = world_bones[j];
+                        skinning_palette_buf[j] = world_bones_buf[j];
                     }
                 }
 
                 bool is_player_visible = true;
 
-                render_palettes[i] = { model, skinning_palette, is_player_visible, sanitized_bones };
+                render_palettes[i] = { model, skinning_palette_buf, is_player_visible, sanitized_bones_buf };
             }
 
-            // 2.5 Batch convert and upload bone matrices to UBO
-            std::vector<float> batch_bones;
-            batch_bones.reserve(packet.player_count * 128 * 16);
+            // 2.5 Batch convert and upload bone matrices to UBO (write directly into static buffer)
+            batch_bones.clear();
+            batch_bones.resize(static_cast<size_t>(packet.player_count) * 128 * 16, 0.0f);
             player_ubo_slots.assign(packet.player_count, -1);
             int current_slot = 0;
 
@@ -751,12 +1088,11 @@ int main() {
                 const auto& rp = render_palettes[i];
                 if (!rp.model) continue;
 
-                float mat4_array[128 * 16];
-                std::memset(mat4_array, 0, sizeof(mat4_array));
+                float* slot_base = batch_bones.data() + static_cast<size_t>(current_slot) * 128 * 16;
 
                 for (size_t j = 0; j < rp.skinning_palette.size() && j < 128; ++j) {
                     const auto& b = rp.skinning_palette[j];
-                    float* dest = &mat4_array[j * 16];
+                    float* dest = slot_base + j * 16;
                     // Column 0
                     dest[0] = b.mat[0][0]; dest[1] = b.mat[1][0]; dest[2] = b.mat[2][0]; dest[3] = 0.0f;
                     // Column 1
@@ -767,11 +1103,10 @@ int main() {
                     dest[12] = b.mat[0][3]; dest[13] = b.mat[1][3]; dest[14] = b.mat[2][3]; dest[15] = 1.0f;
                 }
                 for (size_t j = rp.skinning_palette.size(); j < 128; ++j) {
-                    float* dest = &mat4_array[j * 16];
+                    float* dest = slot_base + j * 16;
                     dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
                 }
 
-                batch_bones.insert(batch_bones.end(), mat4_array, mat4_array + 128 * 16);
                 player_ubo_slots[i] = current_slot++;
             }
 
@@ -1110,6 +1445,136 @@ int main() {
             depth_prepass.render_wireframe(gl_vp, cfg.map_visualizer_color, cfg.map_visualizer_depth_tested);
         }
 
+        // Render Grenade Trajectories
+        if (cfg.draw_grenade_trajectory) {
+            esp_renderer.clear();
+            esp_renderer.set_projection(gl_vp);
+
+            // B) Draw Held Grenade Trajectory
+            if (cfg.draw_grenade_trajectory && render_result.held_trajectory.valid && !render_result.held_trajectory.points.empty()) {
+                const auto& traj = render_result.held_trajectory;
+                for (size_t i = 0; i < traj.points.size() - 1; ++i) {
+                    esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], cfg.grenade_trajectory_color, cfg.trajectory_thickness);
+                }
+                for (const auto& bounce : traj.bounces) {
+                    float bs = cfg.trajectory_bounce_size;
+                    Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
+                    Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
+                    add_box_3d(esp_renderer, mins, maxs, cfg.trajectory_bounce_color, 1.5f);
+                }
+                add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color, cfg.trajectory_thickness);
+            }
+
+            // C) Draw In-Flight Grenade Trajectories
+            if (cfg.draw_grenade_trajectory && !render_result.inflight_trajectories.empty()) {
+                for (const auto& traj : render_result.inflight_trajectories) {
+                    if (!traj.valid || traj.points.empty()) continue;
+
+                    for (size_t i = 0; i < traj.points.size() - 1; ++i) {
+                        esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], cfg.grenade_trajectory_color, cfg.trajectory_thickness);
+                    }
+
+                    // Draw bounce boxes
+                    for (const auto& bounce : traj.bounces) {
+                        float bs = cfg.trajectory_bounce_size;
+                        Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
+                        Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
+                        add_box_3d(esp_renderer, mins, maxs, cfg.trajectory_bounce_color, 1.5f);
+                    }
+                    add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color, cfg.trajectory_thickness);
+                }
+            }
+
+            // D) Draw Fading/Erasing Grenade Trajectories
+            if (cfg.draw_grenade_trajectory && !fading_trajectories.empty()) {
+                for (const auto& fading : fading_trajectories) {
+                    const auto& traj = fading.traj;
+                    if (traj.points.empty()) continue;
+
+                    // Calculate point where erasure has reached with sub-segment interpolation
+                    float float_idx = static_cast<float>(traj.points.size() - 1) * fading.erase_progress;
+                    size_t start_idx = static_cast<size_t>(float_idx);
+                    if (start_idx >= traj.points.size() - 1) continue;
+                    float frac = float_idx - static_cast<float>(start_idx);
+
+                    const auto& p1 = traj.points[start_idx];
+                    const auto& p2 = traj.points[start_idx + 1];
+                    Vec3 lerped_start = {
+                        p1.x + frac * (p2.x - p1.x),
+                        p1.y + frac * (p2.y - p1.y),
+                        p1.z + frac * (p2.z - p1.z)
+                    };
+
+                    // Modulate colors by fade_alpha
+                    float trail_color_mod[4] = {
+                        cfg.grenade_trajectory_color[0],
+                        cfg.grenade_trajectory_color[1],
+                        cfg.grenade_trajectory_color[2],
+                        cfg.grenade_trajectory_color[3] * fading.fade_alpha
+                    };
+                    float bounce_color_mod[4] = {
+                        cfg.trajectory_bounce_color[0],
+                        cfg.trajectory_bounce_color[1],
+                        cfg.trajectory_bounce_color[2],
+                        cfg.trajectory_bounce_color[3] * fading.fade_alpha
+                    };
+                    float detonation_color_mod[4] = {
+                        cfg.trajectory_detonation_color[0],
+                        cfg.trajectory_detonation_color[1],
+                        cfg.trajectory_detonation_color[2],
+                        cfg.trajectory_detonation_color[3] * fading.fade_alpha
+                    };
+
+                    // Draw first partial segment
+                    if (frac < 1.0f) {
+                        esp_renderer.add_line_3d(lerped_start, p2, trail_color_mod, cfg.trajectory_thickness);
+                    }
+
+                    // Draw remaining segments in the modulated trail color
+                    for (size_t i = start_idx + 1; i < traj.points.size() - 1; ++i) {
+                        esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], trail_color_mod, cfg.trajectory_thickness);
+                    }
+
+                    // Draw remaining bounce boxes
+                    for (const auto& bounce : traj.bounces) {
+                        size_t closest_pt_idx = 0;
+                        float min_d = 1e9f;
+                        for (size_t idx = 0; idx < traj.points.size(); ++idx) {
+                            float dx = traj.points[idx].x - bounce.x;
+                            float dy = traj.points[idx].y - bounce.y;
+                            float dz = traj.points[idx].z - bounce.z;
+                            float d = dx*dx + dy*dy + dz*dz;
+                            if (d < min_d) {
+                                min_d = d;
+                                closest_pt_idx = idx;
+                            }
+                        }
+                        if (closest_pt_idx >= start_idx) {
+                            float bs = cfg.trajectory_bounce_size;
+                            Vec3 mins = { bounce.x - bs, bounce.y - bs, bounce.z - bs };
+                            Vec3 maxs = { bounce.x + bs, bounce.y + bs, bounce.z + bs };
+                            add_box_3d(esp_renderer, mins, maxs, bounce_color_mod, 1.5f);
+                        }
+                    }
+
+                    // Draw detonation circle if it hasn't been erased yet
+                    if (start_idx < traj.points.size() - 1) {
+                        add_circle_3d(esp_renderer, traj.end_pos, cfg.trajectory_detonation_radius, detonation_color_mod, cfg.trajectory_thickness);
+                    }
+                }
+            }
+
+            if (cfg.trajectory_show_through_walls) {
+                glDisable(GL_DEPTH_TEST);
+            } else {
+                glEnable(GL_DEPTH_TEST);
+            }
+            glDepthMask(GL_FALSE);
+            esp_renderer.flush_lines();
+            glDepthMask(GL_TRUE);
+            glEnable(GL_DEPTH_TEST);
+        }
+
         // Render ESP Overlay (Skeleton, Box, Health Bar)
         if (cfg.esp_enabled) {
             static float smoothed_health[64] = { -1.0f };
@@ -1198,27 +1663,30 @@ int main() {
             metrics_count++;
         }
 
-        // High-precision pacing limiter
+        // Frame pacing limiter (pure sleep, no spin-wait)
         if (cfg.fps > 0) {
             auto frame_end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double, std::milli> elapsed = frame_end - frame_start;
             double target_ms = 1000.0 / cfg.fps;
             if (elapsed.count() < target_ms) {
                 double remaining = target_ms - elapsed.count();
-                if (remaining > 1.5) {
-                    std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(remaining - 1.5));
-                }
-                while (true) {
-                    auto now = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double, std::milli> spin_elapsed = now - frame_start;
-                    if (spin_elapsed.count() >= target_ms) break;
-                    std::this_thread::yield();
-                }
+                std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(remaining));
             }
         }
     }
 
 
+
+    // Signal worker thread to exit and join
+    {
+        std::lock_guard<std::mutex> lock(worker_data.mutex);
+        worker_data.quit = true;
+        worker_data.has_work = true;
+    }
+    worker_data.cv.notify_one();
+    if (worker_thread.joinable()) {
+        worker_thread.join();
+    }
 
     esp_renderer.cleanup();
 

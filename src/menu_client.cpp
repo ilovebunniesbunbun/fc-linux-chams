@@ -409,6 +409,30 @@ void MenuClient::render_ui() {
             ImGui::EndTabItem();
         }
 
+        // ----------------- TAB: TRAJECTORIES -----------------
+        if (ImGui::BeginTabItem("Trajectories")) {
+            ImGui::Spacing();
+            ImGui::Checkbox("Enable Grenade Trajectory", &cfg.draw_grenade_trajectory);
+            ImGui::Checkbox("Show Through Walls", &cfg.trajectory_show_through_walls);
+            ImGui::Separator();
+
+            if (cfg.draw_grenade_trajectory) {
+                ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Colors");
+                ImGui::ColorEdit4("Trail Color", cfg.grenade_trajectory_color, ImGuiColorEditFlags_AlphaBar);
+                ImGui::ColorEdit4("Bounce Box Color", cfg.trajectory_bounce_color, ImGuiColorEditFlags_AlphaBar);
+                ImGui::ColorEdit4("Detonation Circle Color", cfg.trajectory_detonation_color, ImGuiColorEditFlags_AlphaBar);
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Sizes & Timings");
+                ImGui::SliderFloat("Line Thickness", &cfg.trajectory_thickness, 0.5f, 5.0f, "%.1f");
+                ImGui::SliderFloat("Bounce Box Size", &cfg.trajectory_bounce_size, 0.5f, 10.0f, "%.1f");
+                ImGui::SliderFloat("Detonation Radius", &cfg.trajectory_detonation_radius, 5.0f, 50.0f, "%.1f");
+                ImGui::SliderFloat("Fade Duration", &cfg.trajectory_fade_time, 0.1f, 5.0f, "%.1fs");
+            }
+            ImGui::EndTabItem();
+        }
+
         // ----------------- TAB 2: OCCLUSION & ENGINE -----------------
         if (ImGui::BeginTabItem("VPK Parser")) {
             ImGui::Spacing();
@@ -526,6 +550,99 @@ void MenuClient::render_ui() {
                 ImGui::InputInt("Offset X (Game Left)", &cfg.game_x);
                 ImGui::InputInt("Offset Y (Game Top)", &cfg.game_y);
             }
+
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Hardware Selection");
+            ImGui::Separator();
+
+            // Display current GPU info
+            const char* gl_vendor = (const char*)glGetString(GL_VENDOR);
+            const char* gl_renderer = (const char*)glGetString(GL_RENDERER);
+            if (gl_vendor && gl_renderer) {
+                ImGui::Text("Active GPU: %s (%s)", gl_renderer, gl_vendor);
+            }
+
+            // GPU Preference combo dynamically loaded from system
+            std::vector<GpuDevice> detected_gpus = detect_gpus();
+            
+            std::string current_gpu_label = "Default / System Decision";
+            if (cfg.gpu_preference == "default") {
+                current_gpu_label = "Default / System Decision";
+            } else {
+                for (const auto& gpu : detected_gpus) {
+                    if (gpu.name == cfg.gpu_preference) {
+                        current_gpu_label = gpu.display_name;
+                        break;
+                    }
+                }
+            }
+
+            if (ImGui::BeginCombo("Preferred GPU", current_gpu_label.c_str())) {
+                bool is_default_selected = (cfg.gpu_preference == "default");
+                if (ImGui::Selectable("Default / System Decision", is_default_selected)) {
+                    cfg.gpu_preference = "default";
+                }
+                if (is_default_selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+
+                for (const auto& gpu : detected_gpus) {
+                    bool is_selected = (gpu.name == cfg.gpu_preference);
+                    if (ImGui::Selectable(gpu.display_name.c_str(), is_selected)) {
+                        cfg.gpu_preference = gpu.name;
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Forces OpenGL driver loading via Prime render offload settings.\n(Requires restarting the application to apply).");
+
+            // Monitor Selection combo
+            int monitor_count = 0;
+            GLFWmonitor** monitors = glfwGetMonitors(&monitor_count);
+            std::string current_monitor_label = "Monitor 0 (Primary)";
+            
+            if (monitors && monitor_count > 0) {
+                int target_idx = cfg.monitor_index;
+                if (target_idx < 0 || target_idx >= monitor_count) {
+                    target_idx = 0;
+                }
+                GLFWmonitor* m = monitors[target_idx];
+                const GLFWvidmode* mode = glfwGetVideoMode(m);
+                char label_buf[128];
+                if (mode) {
+                    std::snprintf(label_buf, sizeof(label_buf), "Monitor %d (%s) - %dx%d", target_idx, glfwGetMonitorName(m), mode->width, mode->height);
+                } else {
+                    std::snprintf(label_buf, sizeof(label_buf), "Monitor %d (%s)", target_idx, glfwGetMonitorName(m));
+                }
+                current_monitor_label = label_buf;
+            }
+
+            if (ImGui::BeginCombo("Target Monitor", current_monitor_label.c_str())) {
+                for (int i = 0; i < monitor_count; ++i) {
+                    GLFWmonitor* m = monitors[i];
+                    const GLFWvidmode* mode = glfwGetVideoMode(m);
+                    char label_buf[128];
+                    if (mode) {
+                        std::snprintf(label_buf, sizeof(label_buf), "Monitor %d (%s) - %dx%d", i, glfwGetMonitorName(m), mode->width, mode->height);
+                    } else {
+                        std::snprintf(label_buf, sizeof(label_buf), "Monitor %d (%s)", i, glfwGetMonitorName(m));
+                    }
+                    
+                    bool is_selected = (i == cfg.monitor_index);
+                    if (ImGui::Selectable(label_buf, is_selected)) {
+                        cfg.monitor_index = i;
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Sets the monitor where the transparent game overlay will be placed.\n(Requires restarting the application to apply).");
+            ImGui::Spacing();
 
             ImGui::EndTabItem();
         }

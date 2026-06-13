@@ -9,6 +9,7 @@
 #include <time.h>
 #include <semaphore.h>
 #include <cstddef>
+#include <thread>
 
 struct Vec3 {
     float x, y, z;
@@ -24,7 +25,27 @@ struct BoneTransform {
     Vec4 rotation;  // quaternion (x, y, z, w)
 };
 
+enum GrenadeType : uint8_t {
+    GRENADE_NONE = 0,
+    GRENADE_HE,
+    GRENADE_FLASH,
+    GRENADE_SMOKE,
+    GRENADE_MOLOTOV,
+    GRENADE_DECOY
+};
+
 #pragma pack(push, 1)
+
+struct InFlightProjectile {
+    uint32_t entity_handle;     // CS2 entity index (EntIndex)
+    uint8_t type;               // GrenadeType enum
+    Vec3 initial_position;      // Position when thrown
+    Vec3 initial_velocity;      // Velocity when thrown
+    Vec3 current_position;      // Real-time world origin / detonation origin (via SceneNode)
+    float spawn_time;           // Game time (curtime) when thrown
+    uint8_t active;             // 1 if active, 0 if empty slot
+};
+
 struct PlayerData {
     int team;
     int health;
@@ -41,6 +62,17 @@ struct ShmPacket {
     float view_matrix[16];
     Vec3 local_eye;
     char map_name[64];
+    
+    // --- Local Player Throw State ---
+    uint8_t held_grenade_type;  // GrenadeType (0 if none held/pin not pulled)
+    uint8_t pin_pulled;         // 1 = True, 0 = False
+    float throw_strength;       // 0.0 to 1.0
+    Vec3 local_velocity;        // Local player velocity vector
+    
+    // --- In-Flight Projectiles ---
+    int projectile_count;
+    InFlightProjectile projectiles[8]; // Max 8 active projectiles tracked concurrently
+    
     int player_count;
     PlayerData players[64];
 };
@@ -117,13 +149,13 @@ public:
     }
 
     bool fetch_latest(ShmPacket& out_packet) {
-        if (!mapped_data) return false;
+        if (__builtin_expect(!mapped_data, 0)) return false;
         
         for (int retry = 0; retry < 5; ++retry) {
             uint32_t seq1 = mapped_data->frame_index;
-            if (seq1 % 2 != 0) {
+            if (__builtin_expect(seq1 % 2 != 0, 0)) {
                 // Writer is currently updating the buffer
-                usleep(10);
+                std::this_thread::yield();
                 continue;
             }
             
@@ -140,7 +172,7 @@ public:
             }
             
             uint32_t seq2 = mapped_data->frame_index;
-            if (seq1 == seq2) {
+            if (__builtin_expect(seq1 == seq2, 1)) {
                 last_frame_idx = seq1;
                 return true;
             }
@@ -152,19 +184,19 @@ public:
     // Read the latest view matrix directly from mapped shared memory (not cached packet).
     // This can return a fresher view matrix than the last packet if the bridge updates more frequently.
     bool read_view_matrix(float* out) const {
-        if (!mapped_data) return false;
+        if (__builtin_expect(!mapped_data, 0)) return false;
         
         for (int retry = 0; retry < 5; ++retry) {
             uint32_t seq1 = mapped_data->frame_index;
-            if (seq1 % 2 != 0) {
-                usleep(10);
+            if (__builtin_expect(seq1 % 2 != 0, 0)) {
+                std::this_thread::yield();
                 continue;
             }
             
             std::memcpy(out, mapped_data->view_matrix, sizeof(float) * 16);
             
             uint32_t seq2 = mapped_data->frame_index;
-            if (seq1 == seq2) {
+            if (__builtin_expect(seq1 == seq2, 1)) {
                 return true;
             }
         }

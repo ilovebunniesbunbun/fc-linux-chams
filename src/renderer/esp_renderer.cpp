@@ -136,6 +136,9 @@ void EspRenderer::cleanup() {
 }
 
 void EspRenderer::clear() {
+    for (auto& p : line_batches) {
+        p.second.clear();
+    }
     line_batches.clear();
     triangle_vertices.clear();
 }
@@ -155,9 +158,16 @@ void EspRenderer::set_ortho(float left, float right, float bottom, float top) {
 }
 
 void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const float* color, float thickness) {
-    auto& batch = line_batches[thickness];
-    batch.push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
-    batch.push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
+    std::vector<EspVertex>* batch = nullptr;
+    for (auto& p : line_batches) {
+        if (p.first == thickness) { batch = &p.second; break; }
+    }
+    if (!batch) {
+        line_batches.emplace_back(thickness, std::vector<EspVertex>{});
+        batch = &line_batches.back().second;
+    }
+    batch->push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
+    batch->push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
 }
 
 void EspRenderer::add_quad_2d(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4, const float* color) {
@@ -246,45 +256,59 @@ void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float he
 }
 
 void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color, float thickness) {
-    auto& batch = line_batches[thickness];
-    batch.push_back({p1.x, p1.y, p1.z, color[0], color[1], color[2], color[3]});
-    batch.push_back({p2.x, p2.y, p2.z, color[0], color[1], color[2], color[3]});
+    std::vector<EspVertex>* batch = nullptr;
+    for (auto& p : line_batches) {
+        if (p.first == thickness) { batch = &p.second; break; }
+    }
+    if (!batch) {
+        line_batches.emplace_back(thickness, std::vector<EspVertex>{});
+        batch = &line_batches.back().second;
+    }
+    batch->push_back({p1.x, p1.y, p1.z, color[0], color[1], color[2], color[3]});
+    batch->push_back({p2.x, p2.y, p2.z, color[0], color[1], color[2], color[3]});
 }
 
 void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_positions, const std::vector<int>& chain, const std::vector<float>& vis, int player_idx, const OverlayConfig& cfg, bool for_glow, float pulse_factor, const float* override_glow_color) {
-    std::vector<Vec3> points;
-    std::vector<float> bone_vis;
+    Vec3 points[8];
+    float bone_vis[8];
+    int point_count = 0;
 
     for (int b : chain) {
         if (b >= static_cast<int>(sanitized_positions.size())) continue;
-        points.push_back(sanitized_positions[b]);
+        if (point_count >= 8) break;
+        points[point_count] = sanitized_positions[b];
 
         int vis_idx = player_idx * 128 + b;
         if (vis_idx < static_cast<int>(vis.size())) {
-            bone_vis.push_back(vis[vis_idx]);
+            bone_vis[point_count] = vis[vis_idx];
         } else {
-            bone_vis.push_back(1.0f);
+            bone_vis[point_count] = 1.0f;
         }
+        point_count++;
     }
 
-    if (points.size() < 2) return;
+    if (point_count < 2) return;
 
     float thickness = cfg.esp_skeleton_thickness;
 
     if (cfg.esp_rounded_skeleton) {
-        std::vector<Vec3> ctrl_pts = points;
-        ctrl_pts.insert(ctrl_pts.begin(), points.front());
-        ctrl_pts.push_back(points.back());
-
-        std::vector<float> ctrl_vis = bone_vis;
-        ctrl_vis.insert(ctrl_vis.begin(), bone_vis.front());
-        ctrl_vis.push_back(bone_vis.back());
+        Vec3 ctrl_pts[10]; // max 8 + 2 padding
+        float ctrl_vis[10];
+        ctrl_pts[0] = points[0];
+        ctrl_vis[0] = bone_vis[0];
+        for (int i = 0; i < point_count; ++i) {
+            ctrl_pts[i + 1] = points[i];
+            ctrl_vis[i + 1] = bone_vis[i];
+        }
+        ctrl_pts[point_count + 1] = points[point_count - 1];
+        ctrl_vis[point_count + 1] = bone_vis[point_count - 1];
+        int ctrl_count = point_count + 2;
 
         Vec3 last_pt;
         float last_v = 0.0f;
         bool first = true;
 
-        for (size_t i = 0; i + 3 < ctrl_pts.size(); ++i) {
+        for (int i = 0; i + 3 < ctrl_count; ++i) {
             const auto& p0 = ctrl_pts[i];
             const auto& p1 = ctrl_pts[i + 1];
             const auto& p2 = ctrl_pts[i + 2];
@@ -327,7 +351,7 @@ void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_posit
             }
         }
     } else {
-        for (size_t i = 0; i < points.size() - 1; ++i) {
+        for (int i = 0; i < point_count - 1; ++i) {
             const auto& pt1 = points[i];
             const auto& pt2 = points[i + 1];
             float v1 = bone_vis[i];
@@ -369,7 +393,7 @@ void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_posit
 }
 
 void EspRenderer::add_skeleton_3d(const std::vector<Vec3>& sanitized_positions, int player_idx, const std::vector<float>& vis, const OverlayConfig& cfg, bool for_glow, float pulse_factor, const float* override_glow_color) {
-    const std::vector<std::vector<int>> bone_chains = {
+    static const std::vector<std::vector<int>> bone_chains = {
         {7, 6, 23, 1},
         {23, 10, 11},
         {23, 14, 15},

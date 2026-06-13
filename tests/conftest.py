@@ -37,10 +37,23 @@ class PlayerData(ctypes.Structure):
         ("team", ctypes.c_int),
         ("health", ctypes.c_int),
         ("active", ctypes.c_int),
+        ("has_defuser", ctypes.c_int),
         ("origin", Vec3),
         ("model_name", ctypes.c_char * 64),
         ("bone_count", ctypes.c_int),
         ("bones", BoneTransform * 128)
+    ]
+
+class InFlightProjectile(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("entity_handle", ctypes.c_uint32),
+        ("type", ctypes.c_uint8),
+        ("initial_position", Vec3),
+        ("initial_velocity", Vec3),
+        ("current_position", Vec3),
+        ("spawn_time", ctypes.c_float),
+        ("active", ctypes.c_uint8)
     ]
 
 class ShmPacket(ctypes.Structure):
@@ -50,6 +63,15 @@ class ShmPacket(ctypes.Structure):
         ("view_matrix", ctypes.c_float * 16),
         ("local_eye", Vec3),
         ("map_name", ctypes.c_char * 64),
+        
+        ("held_grenade_type", ctypes.c_uint8),
+        ("pin_pulled", ctypes.c_uint8),
+        ("throw_strength", ctypes.c_float),
+        ("local_velocity", Vec3),
+        
+        ("projectile_count", ctypes.c_int),
+        ("projectiles", InFlightProjectile * 8),
+        
         ("player_count", ctypes.c_int),
         ("players", PlayerData * 64)
     ]
@@ -58,10 +80,10 @@ class MockBridge:
     """Python class to write mock frames to the POSIX shared memory /fc2_chams_shm_bridge
     and signal the named semaphore /fc2_chams_shm_sem using ctypes calls to libc.
     """
-    def __init__(self):
+    def __init__(self, shm_path=None, sem_name=None):
         self.shm_size = ctypes.sizeof(ShmPacket)
-        self.shm_path = "/dev/shm/fc2_chams_shm_bridge_test"
-        self.sem_name = b"/fc2_chams_shm_sem_test"
+        self.shm_path = shm_path or "/dev/shm/fc2_chams_shm_bridge_test"
+        self.sem_name = sem_name or b"/fc2_chams_shm_sem_test"
         
         # Clean up old shm if any
         if os.path.exists(self.shm_path):

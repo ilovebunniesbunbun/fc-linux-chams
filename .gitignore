@@ -43,3 +43,7 @@ pak01_dir.vpk
 .pytest_cache/
 __pycache__/
 .agents/
+imgui.ini
+*.log
+scratch/
+

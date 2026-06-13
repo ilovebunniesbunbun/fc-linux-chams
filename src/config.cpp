@@ -2,6 +2,8 @@
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <filesystem>
+#include <algorithm>
 
 using json = nlohmann::json;
 
@@ -36,6 +38,8 @@ OverlayConfig load_config(const std::string& filename) {
                 {"show_invisible", true},
                 {"maps_dir", "./maps"},
                 {"hyprland_support", false},
+                {"monitor_index", 0},
+                {"gpu_preference", "default"},
                 {"vpk_path", "auto"},
                 {"chams_style_visible", "flat"},
                 {"chams_style_hidden", "flat"},
@@ -84,7 +88,16 @@ OverlayConfig load_config(const std::string& filename) {
                 {"debug_bridge", false},
                 {"map_visualizer_enabled", false},
                 {"map_visualizer_depth_tested", true},
-                {"map_visualizer_color", std::vector<int>{0, 199, 99, 119}}
+                {"map_visualizer_color", std::vector<int>{0, 199, 99, 119}},
+                {"draw_grenade_trajectory", true},
+                {"grenade_trajectory_color", std::vector<int>{171, 176, 220, 204}},
+                {"trajectory_bounce_color", std::vector<int>{195, 200, 215, 255}},
+                {"trajectory_detonation_color", std::vector<int>{140, 150, 235, 255}},
+                {"trajectory_thickness", 2.0},
+                {"trajectory_bounce_size", 2.0},
+                {"trajectory_detonation_radius", 15.0},
+                {"trajectory_fade_time", 1.5},
+                {"trajectory_show_through_walls", false}
             };
             outfile << default_json.dump(4) << std::endl;
             outfile.close();
@@ -111,6 +124,8 @@ OverlayConfig load_config(const std::string& filename) {
         if (j.contains("maps_dir")) cfg.maps_dir = j["maps_dir"].get<std::string>();
         if (j.contains("show_invisible")) cfg.show_invisible = j["show_invisible"].get<bool>();
         if (j.contains("hyprland_support")) cfg.hyprland_support = j["hyprland_support"].get<bool>();
+        if (j.contains("monitor_index")) cfg.monitor_index = j["monitor_index"].get<int>();
+        if (j.contains("gpu_preference")) cfg.gpu_preference = j["gpu_preference"].get<std::string>();
 
         if (j.contains("color_visible") && j["color_visible"].is_array() && j["color_visible"].size() == 4) {
             for (int i = 0; i < 4; ++i) {
@@ -147,6 +162,27 @@ OverlayConfig load_config(const std::string& filename) {
                 cfg.map_visualizer_color[i] = j["map_visualizer_color"][i].get<float>() / 255.0f;
             }
         }
+        if (j.contains("draw_grenade_trajectory")) cfg.draw_grenade_trajectory = j["draw_grenade_trajectory"].get<bool>();
+        if (j.contains("grenade_trajectory_color") && j["grenade_trajectory_color"].is_array() && j["grenade_trajectory_color"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.grenade_trajectory_color[i] = j["grenade_trajectory_color"][i].get<float>() / 255.0f;
+            }
+        }
+        if (j.contains("trajectory_bounce_color") && j["trajectory_bounce_color"].is_array() && j["trajectory_bounce_color"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.trajectory_bounce_color[i] = j["trajectory_bounce_color"][i].get<float>() / 255.0f;
+            }
+        }
+        if (j.contains("trajectory_detonation_color") && j["trajectory_detonation_color"].is_array() && j["trajectory_detonation_color"].size() == 4) {
+            for (int i = 0; i < 4; ++i) {
+                cfg.trajectory_detonation_color[i] = j["trajectory_detonation_color"][i].get<float>() / 255.0f;
+            }
+        }
+        if (j.contains("trajectory_thickness")) cfg.trajectory_thickness = j["trajectory_thickness"].get<float>();
+        if (j.contains("trajectory_bounce_size")) cfg.trajectory_bounce_size = j["trajectory_bounce_size"].get<float>();
+        if (j.contains("trajectory_detonation_radius")) cfg.trajectory_detonation_radius = j["trajectory_detonation_radius"].get<float>();
+        if (j.contains("trajectory_fade_time")) cfg.trajectory_fade_time = j["trajectory_fade_time"].get<float>();
+        if (j.contains("trajectory_show_through_walls")) cfg.trajectory_show_through_walls = j["trajectory_show_through_walls"].get<bool>();
 
         if (j.contains("glow_enabled")) cfg.glow_enabled = j["glow_enabled"].get<bool>();
         if (j.contains("outline_mode")) cfg.outline_mode = j["outline_mode"].get<std::string>();
@@ -297,6 +333,8 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         {"show_invisible", cfg.show_invisible},
         {"maps_dir", cfg.maps_dir},
         {"hyprland_support", cfg.hyprland_support},
+        {"monitor_index", cfg.monitor_index},
+        {"gpu_preference", cfg.gpu_preference},
         {"vpk_path", cfg.vpk_path},
         {"chams_style_visible", cfg.style_vis},
         {"chams_style_hidden", cfg.style_invis},
@@ -415,6 +453,31 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
         static_cast<int>(cfg.map_visualizer_color[3] * 255.0f)
     };
 
+    j["draw_grenade_trajectory"] = cfg.draw_grenade_trajectory;
+    j["grenade_trajectory_color"] = std::vector<int>{
+        static_cast<int>(cfg.grenade_trajectory_color[0] * 255.0f),
+        static_cast<int>(cfg.grenade_trajectory_color[1] * 255.0f),
+        static_cast<int>(cfg.grenade_trajectory_color[2] * 255.0f),
+        static_cast<int>(cfg.grenade_trajectory_color[3] * 255.0f)
+    };
+    j["trajectory_bounce_color"] = std::vector<int>{
+        static_cast<int>(cfg.trajectory_bounce_color[0] * 255.0f),
+        static_cast<int>(cfg.trajectory_bounce_color[1] * 255.0f),
+        static_cast<int>(cfg.trajectory_bounce_color[2] * 255.0f),
+        static_cast<int>(cfg.trajectory_bounce_color[3] * 255.0f)
+    };
+    j["trajectory_detonation_color"] = std::vector<int>{
+        static_cast<int>(cfg.trajectory_detonation_color[0] * 255.0f),
+        static_cast<int>(cfg.trajectory_detonation_color[1] * 255.0f),
+        static_cast<int>(cfg.trajectory_detonation_color[2] * 255.0f),
+        static_cast<int>(cfg.trajectory_detonation_color[3] * 255.0f)
+    };
+    j["trajectory_thickness"] = cfg.trajectory_thickness;
+    j["trajectory_bounce_size"] = cfg.trajectory_bounce_size;
+    j["trajectory_detonation_radius"] = cfg.trajectory_detonation_radius;
+    j["trajectory_fade_time"] = cfg.trajectory_fade_time;
+    j["trajectory_show_through_walls"] = cfg.trajectory_show_through_walls;
+
     // Try saving in current directory first
     std::ofstream file(filename);
     if (!file.is_open()) {
@@ -428,4 +491,59 @@ void save_config(const std::string& filename, const OverlayConfig& cfg) {
     } else {
         std::cerr << "FC2 CHAMS V2: Failed to save config to files." << std::endl;
     }
+}
+
+std::vector<GpuDevice> detect_gpus() {
+    std::vector<GpuDevice> gpus;
+    try {
+        if (std::filesystem::exists("/sys/class/drm")) {
+            for (const auto& entry : std::filesystem::directory_iterator("/sys/class/drm")) {
+                std::string filename = entry.path().filename().string();
+                if (filename.rfind("card", 0) == 0 && filename.find('-') == std::string::npos) {
+                    std::string vendor_path = entry.path().string() + "/device/vendor";
+                    std::string device_path = entry.path().string() + "/device/device";
+                    std::string uevent_path = entry.path().string() + "/device/uevent";
+                    
+                    std::string vendor = "";
+                    std::string device = "";
+                    std::string driver = "";
+                    
+                    std::ifstream vf(vendor_path);
+                    if (vf >> vendor) {
+                        // strip any newline or spaces if read from stream
+                    }
+                    std::ifstream df(device_path);
+                    if (df >> device) {
+                        //
+                    }
+                    
+                    std::ifstream uf(uevent_path);
+                    std::string line;
+                    while (std::getline(uf, line)) {
+                        if (line.rfind("DRIVER=", 0) == 0) {
+                            driver = line.substr(7);
+                        }
+                    }
+                    
+                    std::string display_name = "";
+                    if (vendor == "0x10de" || vendor == "10de") {
+                        display_name = "NVIDIA Dedicated GPU (" + filename + ")";
+                    } else if (vendor == "0x1002" || vendor == "1002") {
+                        display_name = "AMD Radeon GPU (" + filename + ")";
+                    } else if (vendor == "0x8086" || vendor == "8086") {
+                        display_name = "Intel Graphics GPU (" + filename + ")";
+                    } else {
+                        display_name = "Generic GPU (" + filename + ")";
+                    }
+                    
+                    gpus.push_back({filename, vendor, device, driver, display_name});
+                }
+            }
+        }
+    } catch (...) {}
+    
+    std::sort(gpus.begin(), gpus.end(), [](const GpuDevice& a, const GpuDevice& b) {
+        return a.name < b.name;
+    });
+    return gpus;
 }

@@ -322,6 +322,13 @@ void main() {
 }
 )glsl";
 
+static const float k_default_glow[8 * 4] = {
+    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+};
+
 GpuChamsRenderer::~GpuChamsRenderer() {
     cleanup();
 }
@@ -600,35 +607,16 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
     }
 
     if (stencil_outline) {
-        GLboolean stencil_enabled = glIsEnabled(GL_STENCIL_TEST);
-        GLint saved_stencil_func, saved_stencil_ref, saved_stencil_mask;
-        GLint saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass;
-        GLint saved_stencil_writemask;
-        GLboolean depth_write_enabled;
-        GLboolean color_write_mask[4];
-
-        glGetIntegerv(GL_STENCIL_FUNC, &saved_stencil_func);
-        glGetIntegerv(GL_STENCIL_REF, &saved_stencil_ref);
-        glGetIntegerv(GL_STENCIL_VALUE_MASK, &saved_stencil_mask);
-        glGetIntegerv(GL_STENCIL_FAIL, &saved_stencil_fail);
-        glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &saved_stencil_pass_depth_fail);
-        glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &saved_stencil_pass_depth_pass);
-        glGetIntegerv(GL_STENCIL_WRITEMASK, &saved_stencil_writemask);
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write_enabled);
-        glGetBooleanv(GL_COLOR_WRITEMASK, color_write_mask);
-
-        // --- Pass 1: Draw the base body ---
+        // --- Pass 1: Draw the base body and mark stencil ---
         glEnable(GL_STENCIL_TEST);
         glStencilMask(0xFF);
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
         if (style == 0) {
-            // Disable color writes so body is transparent/invisible (hollow outline)
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         }
 
-        // Bind appropriate program for the body style
         unsigned int body_program = (style == 2 || style == 0) ? flat_program_id : program_id;
         glUseProgram(body_program);
         current_program = body_program;
@@ -641,14 +629,7 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
             if (glow_colors) {
                 glUniform4fv(loc_glow_colors, count, glow_colors);
             } else {
-                float default_glow_array[8 * 4];
-                for (int i = 0; i < 8; ++i) {
-                    default_glow_array[i * 4 + 0] = 1.0f;
-                    default_glow_array[i * 4 + 1] = 0.0f;
-                    default_glow_array[i * 4 + 2] = 0.0f;
-                    default_glow_array[i * 4 + 3] = 1.0f;
-                }
-                glUniform4fv(loc_glow_colors, 8, default_glow_array);
+                glUniform4fv(loc_glow_colors, 8, k_default_glow);
             }
             glUniform1iv(loc_ubo_slots, count, relative_slots);
             glUniform1i(loc_style, style);
@@ -657,55 +638,38 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
             glUniform1f(loc_glow_blur, 0.0f);
         }
 
-        // Draw the base model
         glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
 
         if (style == 0) {
-            // Restore color writes
-            glColorMask(color_write_mask[0], color_write_mask[1], color_write_mask[2], color_write_mask[3]);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
 
         // --- Pass 2: Draw the expanded outline ---
         glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
-        glStencilMask(0x00); // Disable stencil writes
-        glDepthMask(GL_FALSE); // Disable depth writes for outline shell
+        glStencilMask(0x00);
+        glDepthMask(GL_FALSE);
 
-        // Bind main shader program and set uniforms for flat style (uStyle = 2)
         glUseProgram(program_id);
         current_program = program_id;
 
-        // Use the outline colors as the flat fill color
         if (glow_colors) {
             glUniform4fv(loc_colors, count, glow_colors);
         } else {
-            float default_glow_array[8 * 4];
-            for (int i = 0; i < 8; ++i) {
-                default_glow_array[i * 4 + 0] = 1.0f;
-                default_glow_array[i * 4 + 1] = 0.0f;
-                default_glow_array[i * 4 + 2] = 0.0f;
-                default_glow_array[i * 4 + 3] = 1.0f;
-            }
-            glUniform4fv(loc_colors, 8, default_glow_array);
+            glUniform4fv(loc_colors, 8, k_default_glow);
         }
         glUniform1iv(loc_ubo_slots, count, relative_slots);
-        glUniform1i(loc_style, 2); // Flat style
+        glUniform1i(loc_style, 2);
 
         float active_thickness = glow_thickness > 0.0f ? glow_thickness : 1.5f;
         glUniform1f(loc_glow_thickness, active_thickness);
         glUniform1f(loc_glow_intensity, 1.0f);
         glUniform1f(loc_glow_blur, 0.0f);
 
-        // Draw the expanded outline shell
         glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
 
-        // Restore original OpenGL states
-        glDepthMask(depth_write_enabled);
-        glStencilFunc(saved_stencil_func, saved_stencil_ref, saved_stencil_mask);
-        glStencilOp(saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass);
-        glStencilMask(saved_stencil_writemask);
-        if (!stencil_enabled) {
-            glDisable(GL_STENCIL_TEST);
-        }
+        // Restore known state from begin_body_pass
+        glDepthMask(GL_TRUE);
+        glDisable(GL_STENCIL_TEST);
         return;
     }
 
@@ -723,14 +687,7 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
         if (glow_colors) {
             glUniform4fv(loc_glow_colors, count, glow_colors);
         } else {
-            float default_glow_array[8 * 4];
-            for (int i = 0; i < 8; ++i) {
-                default_glow_array[i * 4 + 0] = 1.0f;
-                default_glow_array[i * 4 + 1] = 0.0f;
-                default_glow_array[i * 4 + 2] = 0.0f;
-                default_glow_array[i * 4 + 3] = 1.0f;
-            }
-            glUniform4fv(loc_glow_colors, 8, default_glow_array);
+            glUniform4fv(loc_glow_colors, 8, k_default_glow);
         }
         glUniform1iv(loc_ubo_slots, count, relative_slots);
         glUniform1i(loc_style, style);
@@ -743,19 +700,6 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
     if (style == 2 && no_overlap) {
         current_stencil_ref = (current_stencil_ref % 255) + 1;
 
-        GLboolean stencil_enabled = glIsEnabled(GL_STENCIL_TEST);
-        GLint saved_stencil_func, saved_stencil_ref, saved_stencil_mask;
-        GLint saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass;
-        GLint saved_stencil_writemask;
-
-        glGetIntegerv(GL_STENCIL_FUNC, &saved_stencil_func);
-        glGetIntegerv(GL_STENCIL_REF, &saved_stencil_ref);
-        glGetIntegerv(GL_STENCIL_VALUE_MASK, &saved_stencil_mask);
-        glGetIntegerv(GL_STENCIL_FAIL, &saved_stencil_fail);
-        glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &saved_stencil_pass_depth_fail);
-        glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &saved_stencil_pass_depth_pass);
-        glGetIntegerv(GL_STENCIL_WRITEMASK, &saved_stencil_writemask);
-
         glEnable(GL_STENCIL_TEST);
         glStencilMask(0xFF);
         glStencilFunc(GL_NOTEQUAL, current_stencil_ref, 0xFF);
@@ -763,12 +707,7 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
 
         glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
 
-        glStencilFunc(saved_stencil_func, saved_stencil_ref, saved_stencil_mask);
-        glStencilOp(saved_stencil_fail, saved_stencil_pass_depth_fail, saved_stencil_pass_depth_pass);
-        glStencilMask(saved_stencil_writemask);
-        if (!stencil_enabled) {
-            glDisable(GL_STENCIL_TEST);
-        }
+        glDisable(GL_STENCIL_TEST);
     } else {
         glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
     }
@@ -792,8 +731,7 @@ void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t in
     if (glow_color) {
         std::memcpy(glow_colors, glow_color, sizeof(float) * 4);
     } else {
-        float default_glow[4] = {1.0f, 0.0f, 0.0f, 1.0f};
-        std::memcpy(glow_colors, default_glow, sizeof(float) * 4);
+        std::memcpy(glow_colors, k_default_glow, sizeof(float) * 4);
     }
 
     // Fallback one-off upload to UBO slot 0 if not pre-batched

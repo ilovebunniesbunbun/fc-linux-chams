@@ -12,6 +12,18 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from tests.conftest import ShmPacket, PlayerData, Vec3, BoneTransform, Vec4, MockBridge
 from tests.mock_vpk_gen import create_mock_vpk
 
+# Morton-3 encoding math
+def dilate1(x):
+    x &= 0x000003ff
+    x = (x | (x << 16)) & 0x030000ff
+    x = (x | (x << 8))  & 0x0300f00f
+    x = (x | (x << 4))  & 0x030c30c3
+    x = (x | (x << 2))  & 0x09249249
+    return x
+
+def morton3_encode(x, y, z):
+    return dilate1(x) | (dilate1(y) << 1) | (dilate1(z) << 2)
+
 # Vector and Matrix Helper Math for Camera simulation
 def perspective(fov_deg, aspect, near, far):
     fov_rad = math.radians(fov_deg)
@@ -120,8 +132,14 @@ def main():
     # 3. Open POSIX shared memory bridge
     print("[*] Initializing POSIX Shared Memory segment & Semaphore...")
     try:
-        bridge = MockBridge()
-        print("[+] Bridge successfully initialized.")
+        shm_name = os.environ.get("FC2_SHM_NAME", "/fc2_chams_shm_bridge")
+        if not shm_name.startswith("/"):
+            shm_name = "/" + shm_name
+        shm_path = f"/dev/shm{shm_name}"
+        sem_name = os.environ.get("FC2_SEM_NAME", "/fc2_chams_shm_sem").encode('utf-8')
+        
+        bridge = MockBridge(shm_path=shm_path, sem_name=sem_name)
+        print(f"[+] Bridge successfully initialized at {shm_path} with sem {sem_name.decode()}.")
     except Exception as e:
         print(f"[-] ERROR: Failed to setup POSIX shared memory: {e}")
         print("    Ensure you have write permission to /dev/shm")
@@ -205,6 +223,27 @@ def main():
             packet.players[2].bones[0].rotation = Vec4(0.0, 0.0, 0.0, 1.0)
             packet.players[2].bones[1].position = Vec3(-80.0, -100.0, 50.0)
             packet.players[2].bones[1].rotation = Vec4(0.0, 0.0, 0.0, 1.0)
+
+            # Simulate a held HE grenade
+            packet.held_grenade_type = 1  # GRENADE_HE
+            packet.pin_pulled = 1
+            packet.throw_strength = 1.0
+            packet.local_velocity = Vec3(0.0, 0.0, 0.0)
+
+            # Simulate one active in-flight HE projectile
+            packet.projectile_count = 1
+            p = packet.projectiles[0]
+            p.active = 1
+            p.entity_handle = 199
+            p.type = 1  # GRENADE_HE
+            p.initial_position = Vec3(0.0, 0.0, 0.0)
+            p.initial_velocity = Vec3(0.0, 0.0, 150.0)
+            p.current_position = Vec3(0.0, 0.0, 0.0)
+            p.spawn_time = t
+
+            # Make the rest of the projectile array inactive
+            for idx in range(1, 8):
+                packet.projectiles[idx].active = 0
 
             # Write packet and signal semaphore
             bridge.write_frame(packet)
