@@ -1505,6 +1505,13 @@ int main() {
             esp_renderer.clear();
             esp_renderer.set_projection(gl_vp);
 
+            if (cfg.trajectory_show_through_walls) {
+                glDisable(GL_DEPTH_TEST);
+            } else {
+                glEnable(GL_DEPTH_TEST);
+            }
+            glDepthMask(GL_FALSE);
+
             // B) Draw Held Grenade Trajectory
             if (cfg.draw_grenade_trajectory && render_result.held_trajectory.valid && !render_result.held_trajectory.points.empty()) {
                 const auto& traj = render_result.held_trajectory;
@@ -1582,12 +1589,6 @@ int main() {
                 }
             }
 
-            if (cfg.trajectory_show_through_walls) {
-                glDisable(GL_DEPTH_TEST);
-            } else {
-                glEnable(GL_DEPTH_TEST);
-            }
-            glDepthMask(GL_FALSE);
             esp_renderer.flush_lines();
             esp_renderer.flush_instances();
             glDepthMask(GL_TRUE);
