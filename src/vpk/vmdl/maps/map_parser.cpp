@@ -7,6 +7,7 @@
 #include <sstream>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 
 namespace MapParser {
 
@@ -364,6 +365,143 @@ static bool BuildFromWorldPhysics(vpk::VPKDir& map_vpk,
     return false;
 }
 
+static Vec3 ParseVec3(const source2::kv3::KVValue* val, const Vec3& default_val = {0.f, 0.f, 0.f}) {
+    if (!val) return default_val;
+    if (val->is_array() && val->size() >= 3) {
+        float x = 0.f, y = 0.f, z = 0.f;
+        if (const auto* xv = val->get(0)) x = static_cast<float>(xv->as_float());
+        if (const auto* yv = val->get(1)) y = static_cast<float>(yv->as_float());
+        if (const auto* zv = val->get(2)) z = static_cast<float>(zv->as_float());
+        return {x, y, z};
+    }
+    if (val->is_string()) {
+        std::stringstream ss(val->as_string());
+        float x = default_val.x, y = default_val.y, z = default_val.z;
+        if (ss >> x >> y >> z) return {x, y, z};
+    }
+    return default_val;
+}
+
+static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
+                                 const std::string& mapName,
+                                 std::vector<Triangle>& out,
+                                 std::vector<Triangle>& out_visual) {
+    const std::string ents_path = "maps/" + mapName + "/entities/default_ents.vents_c";
+    auto bytes_ents = map_vpk.read_file(ents_path);
+    if (!bytes_ents || bytes_ents->empty()) return;
+
+    auto hdr_opt = source2::parse_res_header(bytes_ents->data(), bytes_ents->size());
+    if (!hdr_opt) return;
+
+    const auto* data_blk = source2::find_block(*hdr_opt, "DATA");
+    if (!data_blk || data_blk->offset + data_blk->size > bytes_ents->size()) return;
+
+    auto kv_opt = source2::kv3::parse_binary(
+        bytes_ents->data() + data_blk->offset, data_blk->size);
+    if (!kv_opt || !kv_opt->is_object()) return;
+
+    const auto* entities_val = kv_opt->get("m_entityKeyValues");
+    if (!entities_val || !entities_val->is_array()) return;
+
+    static vpk::VPKDir s_pak01_vpk;
+    static bool s_pak01_vpk_initialized = false;
+    static std::mutex s_pak01_mutex;
+
+    if (!s_pak01_vpk_initialized) {
+        std::lock_guard<std::mutex> lock(s_pak01_mutex);
+        if (!s_pak01_vpk_initialized) {
+            for (const auto& path : vpk::cs2_default_vpk_paths()) {
+                if (s_pak01_vpk.open(path)) {
+                    s_pak01_vpk_initialized = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < entities_val->size(); ++i) {
+        const auto* ent = entities_val->get(i);
+        if (!ent || !ent->is_object()) continue;
+
+        const auto* kv3_data = ent->get("keyValues3Data");
+        if (!kv3_data || !kv3_data->is_object()) continue;
+
+        const auto* values = kv3_data->get("values");
+        if (!values || !values->is_object()) continue;
+
+        const auto* classname_val = values->get("classname");
+        if (!classname_val || !classname_val->is_string()) continue;
+        std::string classname = classname_val->as_string();
+
+        if (classname != "func_brush" && classname != "func_breakable" &&
+            classname != "func_clip_vphysics" && classname != "func_physbox" &&
+            classname != "prop_dynamic" && classname != "prop_dynamic_override" &&
+            classname != "prop_physics" && classname != "prop_physics_multiplayer") {
+            continue;
+        }
+
+        const auto* model_val = values->get("model");
+        if (!model_val || !model_val->is_string()) continue;
+        std::string model_path = model_val->as_string();
+        if (model_path.empty()) continue;
+
+        if (model_path.size() >= 5 && model_path.compare(model_path.size() - 5, 5, ".vmdl") == 0) {
+            model_path += "_c";
+        }
+        for (char& c : model_path) {
+            if (c == '\\') c = '/';
+            else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+
+        std::optional<std::vector<uint8_t>> model_bytes = map_vpk.read_file(model_path);
+        if (!model_bytes && s_pak01_vpk_initialized) {
+            model_bytes = s_pak01_vpk.read_file(model_path);
+        }
+        if (!model_bytes) continue;
+
+        std::vector<Triangle> local_phys;
+        std::vector<Triangle> local_visual;
+        if (!AppendPhysBlockTriangles(*model_bytes, local_phys, local_visual)) continue;
+
+        Vec3 origin = ParseVec3(values->get("origin"), {0.f, 0.f, 0.f});
+        Vec3 angles = ParseVec3(values->get("angles"), {0.f, 0.f, 0.f});
+        Vec3 scales = ParseVec3(values->get("scales"), {1.f, 1.f, 1.f});
+        if (const auto* scale_val = values->get("scale")) {
+            float s = static_cast<float>(scale_val->as_float());
+            scales = {s, s, s};
+        }
+
+        const float pitch_rad = angles.x * (3.14159265f / 180.f);
+        const float yaw_rad   = angles.y * (3.14159265f / 180.f);
+        const float roll_rad  = angles.z * (3.14159265f / 180.f);
+
+        float cx = std::cos(roll_rad); float sx = std::sin(roll_rad);
+        float cy = std::cos(pitch_rad); float sy = std::sin(pitch_rad);
+        float cz = std::cos(yaw_rad); float sz = std::sin(yaw_rad);
+
+        float r00 = cz * cy; float r01 = cz * sx * sy - sz * cx; float r02 = cz * cx * sy + sz * sx;
+        float r10 = sz * cy; float r11 = sz * sx * sy + cz * cx; float r12 = sz * cx * sy - cz * sx;
+        float r20 = -sy; float r21 = sx * cy; float r22 = cx * cy;
+
+        auto TransformVec3 = [&](const Vec3& v) -> Vec3 {
+            float sx_v = v.x * scales.x;
+            float sy_v = v.y * scales.y;
+            float sz_v = v.z * scales.z;
+            float rx_v = r00 * sx_v + r01 * sy_v + r02 * sz_v;
+            float ry_v = r10 * sx_v + r11 * sy_v + r12 * sz_v;
+            float rz_v = r20 * sx_v + r21 * sy_v + r22 * sz_v;
+            return {rx_v + origin.x, ry_v + origin.y, rz_v + origin.z};
+        };
+
+        auto TransformTriangle = [&](const Triangle& tri) -> Triangle {
+            return {TransformVec3(tri.v0), TransformVec3(tri.v1), TransformVec3(tri.v2)};
+        };
+
+        for (const auto& tri : local_phys) out.push_back(TransformTriangle(tri));
+        for (const auto& tri : local_visual) out_visual.push_back(TransformTriangle(tri));
+    }
+}
+
 std::string GetCurrentMap() {
     // Retained for interface compatibility, maps are supplied via SHM bridge
     return {};
@@ -457,6 +595,7 @@ MapMesh LoadMesh(const std::string& mapName) {
 
     if (BuildFromWorldPhysics(map_vpk, normalized, result.Triangles, result.VisualTriangles)) {
         result.Valid = true;
+        IntegrateEntityHulls(map_vpk, normalized, result.Triangles, result.VisualTriangles);
         s_LoadStatus = "ok (world_physics tris=" +
                         std::to_string(result.Triangles.size()) + ", visual=" +
                         std::to_string(result.VisualTriangles.size()) + ") from " + opened_path;

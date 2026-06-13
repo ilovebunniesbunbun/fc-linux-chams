@@ -39,10 +39,11 @@ struct Mat3x4 {
 
 namespace detail {
 
-inline bool lz4_decompress(const uint8_t* __restrict src, size_t src_size,
-                            uint8_t*       __restrict dst, size_t dst_size) {
-    size_t si = 0, di = 0;
-    while (di < dst_size) {
+inline bool lz4_decompress_prefix(const uint8_t* __restrict src, size_t src_size,
+                                  uint8_t*       __restrict dst_start, size_t dst_offset, size_t chunk_size) {
+    size_t si = 0, di = dst_offset;
+    const size_t dst_end = dst_offset + chunk_size;
+    while (di < dst_end) {
         if (si >= src_size) return false;
         const uint8_t token = src[si++];
 
@@ -56,12 +57,12 @@ inline bool lz4_decompress(const uint8_t* __restrict src, size_t src_size,
             } while (extra == 255);
         }
         if (si + lit_len > src_size)  return false;
-        if (di + lit_len > dst_size)  return false;
-        std::memcpy(dst + di, src + si, lit_len);
+        if (di + lit_len > dst_end)  return false;
+        std::memcpy(dst_start + di, src + si, lit_len);
         si += lit_len;
         di += lit_len;
 
-        if (di == dst_size) break;   
+        if (di == dst_end) break;   
 
         if (si + 2 > src_size) return false;
         const uint16_t moffset = static_cast<uint16_t>(src[si] | (src[si + 1] << 8));
@@ -79,14 +80,19 @@ inline bool lz4_decompress(const uint8_t* __restrict src, size_t src_size,
         }
 
         if (di < moffset) return false;         
-        if (di + match_len > dst_size) return false;
+        if (di + match_len > dst_end) return false;
 
         const size_t match_start = di - moffset;
         
         for (size_t i = 0; i < match_len; ++i)
-            dst[di++] = dst[match_start + i];
+            dst_start[di++] = dst_start[match_start + i];
     }
     return true;
+}
+
+inline bool lz4_decompress(const uint8_t* __restrict src, size_t src_size,
+                            uint8_t*       __restrict dst, size_t dst_size) {
+    return lz4_decompress_prefix(src, src_size, dst, 0, dst_size);
 }
 
 template<typename T>
@@ -932,7 +938,7 @@ inline std::optional<KVValue> parse_binary(const uint8_t* data, size_t size) {
 
     std::vector<uint32_t> block_compressed_sizes;
     size_t block_size_index = 0;
-    if (count_blocks > 0 && size_block_compressed_sizes > 0) {
+    if (version < 5 && count_blocks > 0 && size_block_compressed_sizes > 0) {
         if (!need(static_cast<size_t>(size_block_compressed_sizes))) {
             return std::nullopt;
         }
@@ -1300,8 +1306,9 @@ inline std::optional<KVValue> parse_binary(const uint8_t* data, size_t size) {
         r.main_buf = b2;
 
         if (count_blocks > 0 && size_binary_blobs > 0) {
-            const int32_t blobs_compressed = size_compressed_total
-                - size_compressed_buffer1 - size_compressed_buffer2;
+            const int32_t blobs_compressed = (version >= 5 && compression_method == 1)
+                ? static_cast<int32_t>(size - pos)
+                : size_compressed_total - size_compressed_buffer1 - size_compressed_buffer2;
             if (blobs_compressed > 0 && pos + static_cast<size_t>(blobs_compressed) <= size) {
                 if (compression_method == 2) {
                     blobs_storage.resize(static_cast<size_t>(size_binary_blobs));
@@ -1310,6 +1317,31 @@ inline std::optional<KVValue> parse_binary(const uint8_t* data, size_t size) {
                         data + pos, static_cast<size_t>(blobs_compressed));
                     pos += static_cast<size_t>(blobs_compressed);
                     if (ZSTD_isError(got) || got != blobs_storage.size()) return std::nullopt;
+                    r.blobs = blobs_storage.data();
+                    r.blobs_size = blobs_storage.size();
+                } else if (compression_method == 1) {
+                    blobs_storage.resize(static_cast<size_t>(size_binary_blobs));
+                    size_t decompressed_offset = 0;
+                    if (off + static_cast<size_t>(count_blocks) * 2 > buf2.size()) return std::nullopt;
+                    for (int32_t i = 0; i < count_blocks; ++i) {
+                        const int32_t uncompressed_size = detail::rd<int32_t>(r.blob_lengths + i * 4);
+                        const uint16_t compressed_size = detail::rd<uint16_t>(buf2.data() + off + i * 2);
+                        if (uncompressed_size < 0) return std::nullopt;
+                        if (pos + compressed_size > size) return std::nullopt;
+                        if (decompressed_offset + uncompressed_size > blobs_storage.size()) return std::nullopt;
+                        
+                        const bool ok = detail::lz4_decompress_prefix(
+                            data + pos,
+                            compressed_size,
+                            blobs_storage.data(),
+                            decompressed_offset,
+                            uncompressed_size);
+                        if (!ok) return std::nullopt;
+                        
+                        pos += compressed_size;
+                        decompressed_offset += uncompressed_size;
+                    }
+                    off += static_cast<size_t>(count_blocks) * 2;
                     r.blobs = blobs_storage.data();
                     r.blobs_size = blobs_storage.size();
                 } else if (compression_method == 0 && static_cast<size_t>(size_binary_blobs) <= static_cast<size_t>(blobs_compressed)) {
@@ -1363,6 +1395,31 @@ inline std::optional<KVValue> parse_binary(const uint8_t* data, size_t size) {
                     r.blobs = buf1.data() + blob_start;
                     r.blobs_size = static_cast<size_t>(size_binary_blobs);
                 }
+            } else if (size_binary_blobs > 0 && compression_method == 1) {
+                blobs_storage.resize(static_cast<size_t>(size_binary_blobs));
+                size_t decompressed_offset = 0;
+                const size_t compressed_sizes_off = off_after_types + blob_len_bytes + 4;
+                if (compressed_sizes_off + static_cast<size_t>(count_blocks) * 2 > buf1.size()) return std::nullopt;
+                for (int32_t i = 0; i < count_blocks; ++i) {
+                    const int32_t uncompressed_size = detail::rd<int32_t>(r.blob_lengths + i * 4);
+                    const uint16_t compressed_size = detail::rd<uint16_t>(buf1.data() + compressed_sizes_off + i * 2);
+                    if (uncompressed_size < 0) return std::nullopt;
+                    if (pos + compressed_size > size) return std::nullopt;
+                    if (decompressed_offset + uncompressed_size > blobs_storage.size()) return std::nullopt;
+                    
+                    const bool ok = detail::lz4_decompress_prefix(
+                        data + pos,
+                        compressed_size,
+                        blobs_storage.data(),
+                        decompressed_offset,
+                        uncompressed_size);
+                    if (!ok) return std::nullopt;
+                    
+                    pos += compressed_size;
+                    decompressed_offset += uncompressed_size;
+                }
+                r.blobs = blobs_storage.data();
+                r.blobs_size = blobs_storage.size();
             }
 
             if (pos + 4 <= size) {

@@ -2,84 +2,120 @@
 
 A high-performance, GPU-skinned player chams visualizer and transparent overlay for Linux. This application runs concurrently with a dedicated settings control panel built using **Dear ImGui**, giving you real-time tuning capabilities over all overlay and rendering parameters.
 
----
-
-## Features
-
-* **Interactive Control Panel**: A separate, standard decorated settings window where you can focus, click, and customize options without interfering with the transparent, click-through gameplay overlay.
-* **GPU-Skinned Chams**: Implements flat colors, metallic/fresnel shaders, textures, and glow blend visual styles.
-* **Dynamic Occlusion Engine**:
-  * **GPU Depth Prepass**: Uploads and renders CS2 VPK map geometry on the GPU for pixel-perfect wall occlusion.
-  * **CPU BVH Raytrace Fallback**: An async multi-threaded Bounding Volume Hierarchy (BVH) raycaster to resolve joint visibility when GPU geometry is unavailable.
-* **Precision Frame Limiter**: Features a sub-millisecond pacing loop to limit target overlay FPS smoothly.
-* **Configurable Window Scaling**: Supports stretched, centered, or custom offset geometries to match your CS2 aspect ratio and window alignment.
+By parsing Counter-Strike 2 VPK files and entity data from a POSIX shared-memory segment, it maps player models and world geometry directly to your screen with zero performance impact on the game client.
 
 ---
 
 ## Prerequisites & Dependencies
 
-To build the project, you need a C++20 compiler, CMake, OpenGL, GLFW3, and X11/Xext development libraries. 
+To compile and run `fc2-chams`, you must satisfy the following software dependencies.
 
 > [!NOTE]
-> This application only supports Arch-based distributions.
+> This application only supports Arch-based Linux distributions.
 
-### Install Dependencies
+### Required Tools & Libraries
+* **Operating System**: Arch Linux (X11 server or Wayland with XWayland)
+* **Compiler**: C++20 compliant compiler (GCC 10.0+ or Clang 11.0+)
+* **Build System**: CMake 3.10 or higher
+* **Graphics**: Drivers supporting OpenGL 3.3 Compatibility Profile (supporting modern shaders and immediate mode operations)
 
-#### Arch Linux
+### Installing Dependencies
+
+Run the following command to install the required packages on Arch Linux:
+
 ```bash
-sudo pacman -S base-devel cmake glfw-x11 glu libx11 libxext pkgconf
+sudo pacman -S base-devel cmake glfw-x11 glu libx11 libxext nlohmann-json pkgconf
 ```
 
 ---
 
 ## Build Instructions
 
-1. Clone this repository to your system.
+Because graphics drivers and system linkages vary, you must compile the binaries locally on your system:
+
+1. Open a terminal in the root of the project directory (`fc2-chams/`).
 2. Build the project using CMake:
    ```bash
    cmake -B build -S .
    make -j$(nproc) -C build
    ```
-3. This creates two executable binaries in the `build/` directory:
-   * `fc2_chams`: The main overlay and ImGui settings menu.
-   * `test_model_load`: A standalone tool to verify VPK model decompression and cache loader.
-
----
-
-## Configuration (`overlay.json`)
-
-The application loads its settings from `overlay.json` at startup and can overwrite it when you click "Save Configuration" in the menu. 
-
-Key settings include:
-* `monitor_w` / `monitor_h`: Target display dimensions.
-* `game_w` / `game_h` / `scaling`: Controls aspect ratio mapping (stretched, centered, or custom).
-* `fps`: Frame rate cap (e.g. `144` or `0` for unlimited).
-* `chams_style_visible` / `chams_style_hidden`: Choose style styles (`metallic`, `flat`, `textured`, `glow_blend`, `cs2_glow`, `disabled`).
-* `use_depth_prepass`: Toggle GPU map-based occlusion.
-* `use_bvh_fallback`: Toggle CPU raycast-based occlusion.
-* `maps_dir`: Directory path containing compiled `.tri` collision maps (defaults to `./maps`).
-* `vpk_path`: Path to Counter-Strike `pak01_dir.vpk` (defaults to `auto` to locate via Steam directory).
-* `hyprland_support`: Toggle Hyprland window compatibility mode.
+3. Once compilation finishes, the executables will be located in the `build/` directory:
+   * **`fc2_chams`**: The main application including the transparent overlay and ImGui settings window.
+   * **`test_model_load`**: A standalone diagnostic utility to verify VPK model parsing, LZ4 decompression, and caching.
 
 ---
 
 ## Usage
 
-1. **Start Counter-Strike 2**.
-2. **Start your Lua/Data Bridge** (e.g. omega scripts) to set up the `/fc2_chams_shm_bridge` POSIX shared memory bridge.
+1. **Launch Counter-Strike 2**.
+2. **Start your Lua/Data Bridge** (e.g., omega script) to initialize the `/fc2_chams_shm_bridge` POSIX shared memory bridge.
 3. **Run the overlay**:
    ```bash
    ./build/fc2_chams
    ```
-4. Drag, adjust, and customize chams to your liking on the settings menu.
-5. Closing the setting menu automatically terminates the overlay and exits the process cleanly.
+4. Customize settings (Chams styles, RGBA colors, occlusion modes) inside the ImGui control menu. Click **"Save Configuration"** to write settings to `overlay.json`.
+5. Closing the settings menu will cleanly terminate both the overlay and the configuration utility.
 
 ---
 
-## Hyprland Support
+## Features Tree
 
-If you are running Hyprland, enable **Hyprland Compatibility Mode** in the settings menu. Because wlroots does not support X11 override-redirect window inputs directly, you will need to add a window rule to your Hyprland configuration file (e.g. `hyprland.conf`) to make the overlay float correctly on top of the game:
+```
+fc2-chams
+├── Real-Time Visual Overlay
+│   ├── Skinned 3D Player Chams
+│   │   ├── Flat/Solid shader styling
+│   │   ├── Metallic & Fresnel lighting shaders
+│   │   ├── Glow Blend & Pulsing styles
+│   │   └── Zero-allocation rendering optimizations
+│   ├── Dynamic Occlusion Engine
+│   │   ├── GPU Depth Prepass (Renders map geometry for pixel-perfect wall occlusion)
+│   │   └── CPU BVH Raytrace Fallback (Multi-threaded BVH raycaster when GPU data is missing)
+│   └── Overlay Drawings
+│       ├── Precision bounding box ESP (VBO/VAO optimized)
+│       ├── Skeletons & Joint connections
+│       └── Custom font rendering with texture atlasing
+├── Interactive Control Panel
+│   ├── Separate X11 settings window using Dear ImGui
+│   ├── Shared OpenGL contexts (eliminates duplication of resources)
+│   ├── Save & Load configuration profiles (saved to overlay.json)
+│   └── VSync control & menu refresh rate limiting
+├── Asset Engine
+│   ├── Multi-path VPK Reader (pak01_dir.vpk & map-specific VPKs)
+│   ├── KeyValues3 (KV3) parser (supports binary/text keyvalues)
+│   ├── LZ4 Decompressor (supports Version 5 block-based compression)
+│   └── Non-blocking model cache (offloads assets loading to background threads)
+└── Environment Integrations
+    ├── Custom scaling (aspect ratio mapping: stretched, centered, offset)
+    └── Hyprland window rules support
+```
 
+---
+
+## Hyprland Configuration
+
+When running under **Hyprland**, enable **Hyprland Compatibility Mode** in the overlay settings. Since wlroots does not natively forward input coordinates through override-redirect windows in the same way X11 does, you must define a window rule to keep the overlay floating on top, click-through, and properly aligned.
+
+Add the following rule to your `hyprland.conf` (choose the format that matches your Hyprland version):
+
+### Modern Hyprland syntax (`windowrulev2` - Recommended)
+```hyprland
+# Align and float the overlay
+windowrulev2 = float, class:^(fc2_chams.overlay)$
+windowrulev2 = pin, class:^(fc2_chams.overlay)$
+windowrulev2 = size 100% 100%, class:^(fc2_chams.overlay)$
+windowrulev2 = move 0 0, class:^(fc2_chams.overlay)$
+
+# Make it non-interactive and cosmetic
+windowrulev2 = nofocus, class:^(fc2_chams.overlay)$
+windowrulev2 = noblur, class:^(fc2_chams.overlay)$
+windowrulev2 = noshadow, class:^(fc2_chams.overlay)$
+windowrulev2 = noanim, class:^(fc2_chams.overlay)$
+windowrulev2 = borderwidth 0, class:^(fc2_chams.overlay)$
+windowrulev2 = suppressevent maximize, class:^(fc2_chams.overlay)$
+```
+
+### Classic Hyprland syntax (`windowrule`)
 ```hyprland
 windowrule {
     name = fc2chamsoverlay
