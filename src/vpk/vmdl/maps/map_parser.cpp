@@ -162,7 +162,8 @@ static bool AppendMeshFromPhysData(const std::vector<Vec3>& verts,
 }
 
 bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
-                              std::vector<Triangle>& out) {
+                              std::vector<Triangle>& out,
+                              std::vector<Triangle>& out_visual) {
     auto hdr_opt = source2::parse_res_header(vmdl_blob.data(), vmdl_blob.size());
     if (!hdr_opt) return false;
 
@@ -188,7 +189,7 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
         collision_attrs_root = nullptr;
     }
 
-    auto ShouldSkipPhysicsGroup = [&get_first, collision_attrs_root](const source2::kv3::KVValue* shape) -> bool {
+    auto ShouldSkipPhysicsGroup = [&get_first, collision_attrs_root](const source2::kv3::KVValue* shape, bool for_visuals) -> bool {
         if (!collision_attrs_root) return false;
         if (!shape || !shape->is_object()) return false;
 
@@ -201,7 +202,7 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
         const auto* attr = collision_attrs_root->get(idx);
         if (!attr || !attr->is_object()) return false;
 
-        // Skip skybox and player clips that should not interact with grenades/physics
+        // Skip skybox, player clips, and npc clips
         const auto* interact_as = get_first(attr, { "m_InteractAsStrings", "m_interactAsStrings" });
         if (interact_as && interact_as->is_array()) {
             for (size_t i = 0; i < interact_as->size(); ++i) {
@@ -214,6 +215,11 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                     }
                 }
             }
+        }
+
+        if (for_visuals) {
+            // Visuals do not care about the collision group (debris, weapons, etc. should block chams)
+            return false;
         }
 
         const auto* collision_group = get_first(attr, { "m_CollisionGroupString", "m_collisionGroupString" });
@@ -252,7 +258,9 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                 const auto* h = hulls->get(hi);
                 if (!h || !h->is_object()) continue;
 
-                if (ShouldSkipPhysicsGroup(h)) continue;
+                bool pass_physics = !ShouldSkipPhysicsGroup(h, false);
+                bool pass_visual = !ShouldSkipPhysicsGroup(h, true);
+                if (!pass_physics && !pass_visual) continue;
 
                 const auto* hull = get_first(h, {"m_Hull", "m_hull"});
                 if (!hull || !hull->is_object()) hull = h;
@@ -277,8 +285,16 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                     edges[ei] = {edges_raw[ei * 4 + 0], edges_raw[ei * 4 + 1],
                                  edges_raw[ei * 4 + 2], edges_raw[ei * 4 + 3]};
 
-                if (AppendHullFromPhysData(verts, faces_raw, edges, out))
+                std::vector<Triangle> temp_tris;
+                if (AppendHullFromPhysData(verts, faces_raw, edges, temp_tris)) {
+                    if (pass_physics) {
+                        out.insert(out.end(), temp_tris.begin(), temp_tris.end());
+                    }
+                    if (pass_visual) {
+                        out_visual.insert(out_visual.end(), temp_tris.begin(), temp_tris.end());
+                    }
                     ++parsed_hulls;
+                }
             }
         }
         if (const auto* meshes = get_first(rn_shape, {"m_meshes", "m_Meshes"});
@@ -287,7 +303,9 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                 const auto* m = meshes->get(mi);
                 if (!m || !m->is_object()) continue;
 
-                if (ShouldSkipPhysicsGroup(m)) continue;
+                bool pass_physics = !ShouldSkipPhysicsGroup(m, false);
+                bool pass_visual = !ShouldSkipPhysicsGroup(m, true);
+                if (!pass_physics && !pass_visual) continue;
 
                 const auto* mesh = get_first(m, {"m_Mesh", "m_mesh"});
                 if (!mesh || !mesh->is_object()) mesh = m;
@@ -308,8 +326,16 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                     tris_int32.push_back(source2::detail::rd<int32_t>(tris.data() + i));
                 }
 
-                if (!tris_int32.empty() && AppendMeshFromPhysData(verts, tris_int32, out))
+                std::vector<Triangle> temp_tris;
+                if (!tris_int32.empty() && AppendMeshFromPhysData(verts, tris_int32, temp_tris)) {
+                    if (pass_physics) {
+                        out.insert(out.end(), temp_tris.begin(), temp_tris.end());
+                    }
+                    if (pass_visual) {
+                        out_visual.insert(out_visual.end(), temp_tris.begin(), temp_tris.end());
+                    }
                     ++parsed_meshes;
+                }
             }
         }
     }
@@ -319,18 +345,19 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
 
 static bool BuildFromWorldPhysics(vpk::VPKDir& map_vpk,
                                   const std::string& mapName,
-                                  std::vector<Triangle>& out) {
+                                  std::vector<Triangle>& out,
+                                  std::vector<Triangle>& out_visual) {
     const std::string phys_path_vrman = "maps/" + mapName + "/world_physics.vrman_c";
     auto bytes_vrman = map_vpk.read_file(phys_path_vrman);
     if (bytes_vrman && !bytes_vrman->empty()) {
-        if (AppendPhysBlockTriangles(*bytes_vrman, out))
+        if (AppendPhysBlockTriangles(*bytes_vrman, out, out_visual))
             return true;
     }
 
     const std::string phys_path_vmdl = "maps/" + mapName + "/world_physics.vmdl_c";
     auto bytes_vmdl = map_vpk.read_file(phys_path_vmdl);
     if (bytes_vmdl && !bytes_vmdl->empty()) {
-        if (AppendPhysBlockTriangles(*bytes_vmdl, out))
+        if (AppendPhysBlockTriangles(*bytes_vmdl, out, out_visual))
             return true;
     }
 
@@ -428,10 +455,11 @@ MapMesh LoadMesh(const std::string& mapName) {
         return result;
     }
 
-    if (BuildFromWorldPhysics(map_vpk, normalized, result.Triangles)) {
+    if (BuildFromWorldPhysics(map_vpk, normalized, result.Triangles, result.VisualTriangles)) {
         result.Valid = true;
         s_LoadStatus = "ok (world_physics tris=" +
-                        std::to_string(result.Triangles.size()) + ") from " + opened_path;
+                        std::to_string(result.Triangles.size()) + ", visual=" +
+                        std::to_string(result.VisualTriangles.size()) + ") from " + opened_path;
         s_LoadedMesh = result;
         return result;
     }

@@ -733,7 +733,7 @@ int main() {
             auto result = map_load_future.get();
             map_loading = false;
             if (result.mesh.Valid && !result.mesh.Triangles.empty()) {
-                depth_prepass.upload_geometry(result.mesh.Triangles);
+                depth_prepass.upload_geometry(result.mesh.VisualTriangles);
                 
                 // Signal worker thread to reload map geometry for BVH checks
                 {

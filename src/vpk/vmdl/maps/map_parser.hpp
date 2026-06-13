@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -16,6 +16,7 @@ struct Triangle {
 
 struct MapMesh {
     std::vector<Triangle> Triangles;
+    std::vector<Triangle> VisualTriangles;
     bool Valid = false;
 };
 
@@ -38,6 +39,7 @@ std::vector<Vec2> ProjectTopDown(const MapMesh& Mesh,
 std::vector<MapEntry> ListAllMaps();
 
 bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
-                              std::vector<Triangle>& out);
+                              std::vector<Triangle>& out,
+                              std::vector<Triangle>& out_visual);
 
 }
