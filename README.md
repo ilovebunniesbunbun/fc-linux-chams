@@ -1,8 +1,6 @@
 # FC2 Chams V2
 
-A high-performance, GPU-skinned player chams visualizer and transparent overlay for Linux. This application runs concurrently with a dedicated settings control panel built using **Dear ImGui**, giving you real-time tuning capabilities over all overlay and rendering parameters.
-
-By parsing Counter-Strike 2 VPK files and entity data from a POSIX shared-memory segment, it maps player models and world geometry directly to your screen with zero performance impact on the game client.
+its a vpk parser and bvh and also has chams and visuals it works on linux its awesome! 
 
 ---
 
