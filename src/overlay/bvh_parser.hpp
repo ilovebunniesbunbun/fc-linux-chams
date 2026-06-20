@@ -3,47 +3,44 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
-
 #include <fstream>
+#include <glm/glm.hpp>
+#include <glm/gtx/norm.hpp>
 
 struct TraceResult {
     bool hit = false;
     float fraction = 1.0f;
     float distance = 99999.0f;
-    Vec3 end_pos{0, 0, 0};
-    Vec3 normal{0, 0, 0};
+    glm::vec3 end_pos{0.0f, 0.0f, 0.0f};
+    glm::vec3 normal{0.0f, 0.0f, 0.0f};
 };
 
 class LocalMapBVH {
 public:
     struct AABB {
-        float mins[3]{1e9f, 1e9f, 1e9f};
-        float maxs[3]{-1e9f, -1e9f, -1e9f};
+        glm::vec3 mins{1e9f, 1e9f, 1e9f};
+        glm::vec3 maxs{-1e9f, -1e9f, -1e9f};
 
-        void expand(const Vec3& p) {
-            mins[0] = std::min(mins[0], p.x); maxs[0] = std::max(maxs[0], p.x);
-            mins[1] = std::min(mins[1], p.y); maxs[1] = std::max(maxs[1], p.y);
-            mins[2] = std::min(mins[2], p.z); maxs[2] = std::max(maxs[2], p.z);
+        void expand(const glm::vec3& p) {
+            mins = glm::min(mins, p);
+            maxs = glm::max(maxs, p);
         }
 
-        bool intersects_ray(const float origin[3], const float inv_dir[3], float max_t) const {
-            float t1 = (mins[0] - origin[0]) * inv_dir[0];
-            float t2 = (maxs[0] - origin[0]) * inv_dir[0];
-            float tmin = std::min(t1, t2);
-            float tmax = std::max(t1, t2);
+        bool intersects_ray(const glm::vec3& origin, const glm::vec3& inv_dir, float max_t) const {
+            glm::vec3 t1 = (mins - origin) * inv_dir;
+            glm::vec3 t2 = (maxs - origin) * inv_dir;
+            glm::vec3 tmin_v = glm::min(t1, t2);
+            glm::vec3 tmax_v = glm::max(t1, t2);
 
-            for (int i = 1; i < 3; ++i) {
-                float t1_ = (mins[i] - origin[i]) * inv_dir[i];
-                float t2_ = (maxs[i] - origin[i]) * inv_dir[i];
-                tmin = std::max(tmin, std::min(t1_, t2_));
-                tmax = std::min(tmax, std::max(t1_, t2_));
-            }
+            float tmin = std::max({ tmin_v.x, tmin_v.y, tmin_v.z });
+            float tmax = std::min({ tmax_v.x, tmax_v.y, tmax_v.z });
+
             return tmax >= std::max(0.0f, tmin) && tmin < max_t;
         }
     };
 
     struct Triangle {
-        Vec3 v0, v1, v2;
+        glm::vec3 v0, v1, v2;
     };
 
     struct Node {
@@ -68,20 +65,18 @@ public:
         }
     }
 
-    TraceResult trace_ray(const Vec3& start, const Vec3& end) const {
+    TraceResult trace_ray(const glm::vec3& start, const glm::vec3& end) const {
         TraceResult result;
         result.end_pos = end;
         if (nodes.empty()) return result;
 
-        float dx = end.x - start.x;
-        float dy = end.y - start.y;
-        float dz = end.z - start.z;
-        float max_dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+        glm::vec3 delta = end - start;
+        float max_dist = glm::length(delta);
         if (max_dist < 1e-6f) return result;
 
-        float dir[3] = { dx / max_dist, dy / max_dist, dz / max_dist };
-        float origin[3] = { start.x, start.y, start.z };
-        float inv_dir[3] = { 1.0f / dir[0], 1.0f / dir[1], 1.0f / dir[2] };
+        glm::vec3 dir = delta / max_dist;
+        glm::vec3 origin = start;
+        glm::vec3 inv_dir = 1.0f / dir;
 
         float closest_t = max_dist;
         int stack[128];
@@ -96,40 +91,36 @@ public:
                 // Perform leaf intersection tests using Möller-Trumbore
                 for (int i = node.tri_start; i < node.tri_start + node.tri_count; ++i) {
                     const auto& tri = triangles[indices[i]];
-                    float e1x = tri.v1.x - tri.v0.x, e1y = tri.v1.y - tri.v0.y, e1z = tri.v1.z - tri.v0.z;
-                    float e2x = tri.v2.x - tri.v0.x, e2y = tri.v2.y - tri.v0.y, e2z = tri.v2.z - tri.v0.z;
+                    glm::vec3 e1 = tri.v1 - tri.v0;
+                    glm::vec3 e2 = tri.v2 - tri.v0;
                     
-                    float hx = dir[1] * e2z - dir[2] * e2y;
-                    float hy = dir[2] * e2x - dir[0] * e2z;
-                    float hz = dir[0] * e2y - dir[1] * e2x;
-                    float a = e1x * hx + e1y * hy + e1z * hz;
+                    glm::vec3 h = glm::cross(dir, e2);
+                    float a = glm::dot(e1, h);
 
                     if (a > -1e-6f && a < 1e-6f) continue;
                     float f = 1.0f / a;
-                    float sx = origin[0] - tri.v0.x, sy = origin[1] - tri.v0.y, sz = origin[2] - tri.v0.z;
-                    float u = f * (sx * hx + sy * hy + sz * hz);
+                    glm::vec3 s = origin - tri.v0;
+                    float u = f * glm::dot(s, h);
                     if (u < 0.0f || u > 1.0f) continue;
 
-                    float qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
-                    float v = f * (dir[0] * qx + dir[1] * qy + dir[2] * qz);
+                    glm::vec3 q = glm::cross(s, e1);
+                    float v = f * glm::dot(dir, q);
                     if (v < 0.0f || u + v > 1.0f) continue;
 
-                    float t = f * (e2x * qx + e2y * qy + e2z * qz);
+                    float t = f * glm::dot(e2, q);
                     if (t > 1e-4f && t < closest_t) {
                         result.hit = true;
                         result.distance = t;
                         result.fraction = t / max_dist;
-                        result.end_pos = { start.x + dir[0] * t, start.y + dir[1] * t, start.z + dir[2] * t };
+                        result.end_pos = start + dir * t;
                         
                         // Calculate normal vector of the triangle
-                        float nx = e1y * e2z - e1z * e2y;
-                        float ny = e1z * e2x - e1x * e2z;
-                        float nz = e1x * e2y - e1y * e2x;
-                        float nlen = std::sqrt(nx*nx + ny*ny + nz*nz);
+                        glm::vec3 normal = glm::cross(e1, e2);
+                        float nlen = glm::length(normal);
                         if (nlen > 0.0f) {
-                            result.normal = { nx / nlen, ny / nlen, nz / nlen };
+                            result.normal = normal / nlen;
                         } else {
-                            result.normal = { 0, 0, 1.0f };
+                            result.normal = glm::vec3(0.0f, 0.0f, 1.0f);
                         }
                         return result;
                     }
@@ -143,7 +134,7 @@ public:
     }
 
     // Helper to add a flat quad wall
-    void add_wall(const Vec3& p1, const Vec3& p2, const Vec3& p3, const Vec3& p4) {
+    void add_wall(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4) {
         // Wall split into two triangles
         triangles.push_back({p1, p2, p3});
         triangles.push_back({p1, p3, p4});
@@ -154,10 +145,10 @@ public:
         triangles.clear();
         // A vertical wall at Y = 1000, spanning X: -500 to 500, Z: -200 to 500
         add_wall(
-            {-500.0f, 1000.0f, -200.0f},
-            { 500.0f, 1000.0f, -200.0f},
-            { 500.0f, 1000.0f,  500.0f},
-            {-500.0f, 1000.0f,  500.0f}
+            glm::vec3(-500.0f, 1000.0f, -200.0f),
+            glm::vec3(500.0f, 1000.0f, -200.0f),
+            glm::vec3(500.0f, 1000.0f, 500.0f),
+            glm::vec3(-500.0f, 1000.0f, 500.0f)
         );
         build();
     }
@@ -211,11 +202,9 @@ private:
 
         // Split node logic along longest bounding box axis
         int axis = 0;
-        float dx = bounds.maxs[0] - bounds.mins[0];
-        float dy = bounds.maxs[1] - bounds.mins[1];
-        float dz = bounds.maxs[2] - bounds.mins[2];
-        if (dy > dx) { axis = 1; dx = dy; }
-        if (dz > dx) { axis = 2; }
+        glm::vec3 size = bounds.maxs - bounds.mins;
+        if (size.y > size.x) { axis = 1; }
+        if (size.z > size[axis]) { axis = 2; }
 
         float split_val = (bounds.mins[axis] + bounds.maxs[axis]) * 0.5f;
 
@@ -223,9 +212,7 @@ private:
         int j = start + count - 1;
         while (i <= j) {
             const auto& tri = triangles[indices[i]];
-            float centroid = (axis == 0) ? (tri.v0.x + tri.v1.x + tri.v2.x)/3.0f :
-                             (axis == 1) ? (tri.v0.y + tri.v1.y + tri.v2.y)/3.0f :
-                                           (tri.v0.z + tri.v1.z + tri.v2.z)/3.0f;
+            float centroid = (tri.v0[axis] + tri.v1[axis] + tri.v2[axis]) / 3.0f;
             if (centroid < split_val) {
                 i++;
             } else {

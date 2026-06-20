@@ -2,10 +2,6 @@
 #include <vector>
 #include "../vpk/vmdl/model.hpp"
 
-namespace source2 {
-    struct Mat3x4;
-}
-
 class GpuChamsRenderer {
 public:
     GpuChamsRenderer() = default;
@@ -48,7 +44,7 @@ public:
                                           const int* ubo_slots, const float* colors, int count);
     void end_glow_pass(int width, int height, float thickness, float intensity, unsigned int target_fbo = 0);
 
-    void begin_body_pass(const float* view_proj, const float* cam_pos);
+    void begin_body_pass(const float* view_proj, const float* cam_pos, bool needs_stencil);
     void end_body_pass();
 
 private:

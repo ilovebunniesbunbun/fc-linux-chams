@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 #include <map>
-#include "shm_reader.hpp"
+#include "overlay/shm_reader.hpp"
 #include "config.hpp"
 
 struct EspVertex {
@@ -72,6 +72,8 @@ public:
     void flush_instances();
 
     // Render flushing
+    void upload_lines();
+    void draw_lines_override(const float* override_color);
     void flush_lines();
     void flush_lines_override(const float* override_color);
     void flush_triangles();
@@ -82,6 +84,7 @@ private:
     unsigned int fragment_shader = 0;
     unsigned int vao = 0;
     unsigned int vbo = 0;
+    size_t vbo_capacity = 0;
     
     int loc_proj = -1;
     int loc_color_override = -1;

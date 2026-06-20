@@ -1,8 +1,10 @@
 #include "gpu_chams.hpp"
-#include "gl_loader.hpp"
-#include <iostream>
-#include <cstring>
+
 #include <algorithm>
+#include <cstring>
+
+#include "gl_loader.hpp"
+#include "logger.hpp"
 
 // Embedded GLSL Flat Chams Vertex Shader Source
 static const char* flat_vertex_shader_source = R"glsl(
@@ -195,6 +197,9 @@ void main() {
         vec3 glowRGB = uGlowColor.rgb * uGlowIntensity;
         FragColor = vec4(glowRGB, alpha);
     }
+    else if (uStyle == 8) { // Wireframe
+        FragColor = uColor;
+    }
     else {
         FragColor = uColor;
     }
@@ -323,17 +328,17 @@ void main() {
 )glsl";
 
 static const float k_default_glow[8 * 4] = {
-    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-    1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+    1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
 };
 
-GpuChamsRenderer::~GpuChamsRenderer() {
+GpuChamsRenderer::~GpuChamsRenderer()
+{
     cleanup();
 }
 
-void GpuChamsRenderer::cleanup() {
+void GpuChamsRenderer::cleanup()
+{
     cleanup_fbos();
     if (quad_vao) {
         glDeleteVertexArrays(1, &quad_vao);
@@ -404,8 +409,8 @@ void GpuChamsRenderer::cleanup() {
     }
 }
 
-
-bool GpuChamsRenderer::compile_shader(unsigned int shader, const char* source) {
+bool GpuChamsRenderer::compile_shader(unsigned int shader, const char* source)
+{
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
 
@@ -414,13 +419,14 @@ bool GpuChamsRenderer::compile_shader(unsigned int shader, const char* source) {
     if (!success) {
         char info_log[512];
         glGetShaderInfoLog(shader, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Shader compilation error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Shader compilation error: {}", info_log);
         return false;
     }
     return true;
 }
 
-bool GpuChamsRenderer::link_program() {
+bool GpuChamsRenderer::link_program()
+{
     program_id = glCreateProgram();
     glAttachShader(program_id, vertex_shader);
     glAttachShader(program_id, fragment_shader);
@@ -431,13 +437,14 @@ bool GpuChamsRenderer::link_program() {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(program_id, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Shader linking error: {}", info_log);
         return false;
     }
     return true;
 }
 
-bool GpuChamsRenderer::init() {
+bool GpuChamsRenderer::init()
+{
     vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     if (!compile_shader(vertex_shader, vertex_shader_source)) return false;
 
@@ -447,18 +454,18 @@ bool GpuChamsRenderer::init() {
     if (!link_program()) return false;
 
     // Retrieve uniform locations
-    loc_view_proj      = glGetUniformLocation(program_id, "uViewProj");
-    loc_bones          = glGetUniformLocation(program_id, "uBones");
-    loc_color          = glGetUniformLocation(program_id, "uColor");
-    loc_style          = glGetUniformLocation(program_id, "uStyle");
-    loc_cam_pos        = glGetUniformLocation(program_id, "uCamPos");
-    loc_glow_color     = glGetUniformLocation(program_id, "uGlowColor");
+    loc_view_proj = glGetUniformLocation(program_id, "uViewProj");
+    loc_bones = glGetUniformLocation(program_id, "uBones");
+    loc_color = glGetUniformLocation(program_id, "uColor");
+    loc_style = glGetUniformLocation(program_id, "uStyle");
+    loc_cam_pos = glGetUniformLocation(program_id, "uCamPos");
+    loc_glow_color = glGetUniformLocation(program_id, "uGlowColor");
     loc_glow_thickness = glGetUniformLocation(program_id, "uGlowThickness");
     loc_glow_intensity = glGetUniformLocation(program_id, "uGlowIntensity");
-    loc_glow_blur      = glGetUniformLocation(program_id, "uGlowBlur");
-    loc_ubo_slots      = glGetUniformLocation(program_id, "uUboSlots");
-    loc_colors         = glGetUniformLocation(program_id, "uColors");
-    loc_glow_colors    = glGetUniformLocation(program_id, "uGlowColors");
+    loc_glow_blur = glGetUniformLocation(program_id, "uGlowBlur");
+    loc_ubo_slots = glGetUniformLocation(program_id, "uUboSlots");
+    loc_colors = glGetUniformLocation(program_id, "uColors");
+    loc_glow_colors = glGetUniformLocation(program_id, "uGlowColors");
 
     // Initialize flat shader program
     flat_vertex_shader = glCreateShader(GL_VERTEX_SHADER);
@@ -477,30 +484,24 @@ bool GpuChamsRenderer::init() {
     if (!flat_success) {
         char info_log[512];
         glGetProgramInfoLog(flat_program_id, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Flat shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Flat shader linking error: {}", info_log);
         return false;
     }
 
     loc_flat_view_proj = glGetUniformLocation(flat_program_id, "uViewProj");
-    loc_flat_bones     = glGetUniformLocation(flat_program_id, "uBones");
-    loc_flat_color     = glGetUniformLocation(flat_program_id, "uColor");
+    loc_flat_bones = glGetUniformLocation(flat_program_id, "uBones");
+    loc_flat_color = glGetUniformLocation(flat_program_id, "uColor");
     loc_flat_ubo_slots = glGetUniformLocation(flat_program_id, "uUboSlots");
-    loc_flat_colors    = glGetUniformLocation(flat_program_id, "uColors");
+    loc_flat_colors = glGetUniformLocation(flat_program_id, "uColors");
 
     if (!init_blur_shader()) return false;
     if (!init_seed_shader(blur_vs)) return false;
     if (!init_composite_shader(blur_vs)) return false;
 
     // Setup quad VAO/VBO
-    float quadVertices[] = {
-        -1.0f,  1.0f,
-        -1.0f, -1.0f,
-         1.0f, -1.0f,
+    float quadVertices[] = {-1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f,
 
-        -1.0f,  1.0f,
-         1.0f, -1.0f,
-         1.0f,  1.0f
-    };
+                            -1.0f, 1.0f, 1.0f,  -1.0f, 1.0f, 1.0f};
 
     glGenVertexArrays(1, &quad_vao);
     glGenBuffers(1, &quad_vbo);
@@ -534,16 +535,14 @@ bool GpuChamsRenderer::init() {
     return true;
 }
 
-
-void GpuChamsRenderer::begin(const float* view_proj, const float* cam_pos) {
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
-    glUniform3fv(loc_cam_pos, 1, cam_pos);
-
+void GpuChamsRenderer::begin(const float* view_proj, const float* cam_pos)
+{
     glUseProgram(flat_program_id);
     glUniformMatrix4fv(loc_flat_view_proj, 1, GL_FALSE, view_proj);
 
     glUseProgram(program_id);
+    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
+    glUniform3fv(loc_cam_pos, 1, cam_pos);
     current_program = program_id;
 
     glStencilMask(0xFF);
@@ -559,23 +558,24 @@ void GpuChamsRenderer::begin(const float* view_proj, const float* cam_pos) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
-void GpuChamsRenderer::upload_bones_batch(const float* mat4_data, size_t count) {
+void GpuChamsRenderer::upload_bones_batch(const float* mat4_data, size_t count)
+{
     if (count == 0 || !mat4_data) return;
     size_t size = count * 128 * sizeof(float) * 16;
     if (size > 64 * 8192) {
-        size = 64 * 8192; // Clamp to UBO buffer size
+        size = 64 * 8192;  // Clamp to UBO buffer size
     }
     glBindBuffer(GL_UNIFORM_BUFFER, bones_ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, size, mat4_data);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
-void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo, size_t index_count,
-                                            int style, const float* glow_color,
-                                            float glow_thickness, float glow_intensity, float glow_blur,
-                                            bool no_overlap, const int* ubo_slots, const float* colors,
-                                            const float* glow_colors, int count,
-                                            bool stencil_outline) {
+void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo, size_t index_count, int style,
+                                             const float* glow_color, float glow_thickness, float glow_intensity,
+                                             float glow_blur, bool no_overlap, const int* ubo_slots,
+                                             const float* colors, const float* glow_colors, int count,
+                                             bool stencil_outline)
+{
     if (count <= 0) return;
 
     // Find base slot (minimum) to bind range
@@ -697,6 +697,11 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
         glUniform1f(loc_glow_blur, glow_blur);
     }
 
+    bool is_wireframe = (style == 8);
+    if (is_wireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    }
+
     if (style == 2 && no_overlap) {
         current_stencil_ref = (current_stencil_ref % 255) + 1;
 
@@ -711,22 +716,21 @@ void GpuChamsRenderer::render_mesh_instanced(unsigned int vao, unsigned int ibo,
     } else {
         glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)index_count, GL_UNSIGNED_INT, nullptr, count);
     }
+
+    if (is_wireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
 }
 
 void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t index_count,
-                                  const std::vector<source2::Mat3x4>& bones_palette,
-                                  const float* color, int style,
-                                  const float* glow_color,
-                                  float glow_thickness,
-                                  float glow_intensity,
-                                  float glow_blur,
-                                  bool no_overlap,
-                                  int ubo_slot,
-                                  bool stencil_outline) {
-    int ubo_slots[1] = { ubo_slot >= 0 ? ubo_slot : 0 };
+                                   const std::vector<source2::Mat3x4>& bones_palette, const float* color, int style,
+                                   const float* glow_color, float glow_thickness, float glow_intensity, float glow_blur,
+                                   bool no_overlap, int ubo_slot, bool stencil_outline)
+{
+    int ubo_slots[1] = {ubo_slot >= 0 ? ubo_slot : 0};
     float colors[4];
     std::memcpy(colors, color, sizeof(float) * 4);
-    
+
     float glow_colors[4];
     if (glow_color) {
         std::memcpy(glow_colors, glow_color, sizeof(float) * 4);
@@ -742,10 +746,22 @@ void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t in
         for (size_t i = 0; i < bones_palette.size() && i < 128; ++i) {
             const auto& b = bones_palette[i];
             float* dest = &mat4_array[i * 16];
-            dest[0] = b.mat[0][0]; dest[1] = b.mat[1][0]; dest[2] = b.mat[2][0]; dest[3] = 0.0f;
-            dest[4] = b.mat[0][1]; dest[5] = b.mat[1][1]; dest[6] = b.mat[2][1]; dest[7] = 0.0f;
-            dest[8] = b.mat[0][2]; dest[9] = b.mat[1][2]; dest[10] = b.mat[2][2]; dest[11] = 0.0f;
-            dest[12] = b.mat[0][3]; dest[13] = b.mat[1][3]; dest[14] = b.mat[2][3]; dest[15] = 1.0f;
+            dest[0] = b[0][0];
+            dest[1] = b[0][1];
+            dest[2] = b[0][2];
+            dest[3] = 0.0f;
+            dest[4] = b[1][0];
+            dest[5] = b[1][1];
+            dest[6] = b[1][2];
+            dest[7] = 0.0f;
+            dest[8] = b[2][0];
+            dest[9] = b[2][1];
+            dest[10] = b[2][2];
+            dest[11] = 0.0f;
+            dest[12] = b[0][3];
+            dest[13] = b[1][3];
+            dest[14] = b[2][3];
+            dest[15] = 1.0f;
         }
         for (size_t i = bones_palette.size(); i < 128; ++i) {
             float* dest = &mat4_array[i * 16];
@@ -756,12 +772,12 @@ void GpuChamsRenderer::render_mesh(unsigned int vao, unsigned int ibo, size_t in
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 8192, mat4_array);
     }
 
-    render_mesh_instanced(vao, ibo, index_count, style, glow_colors,
-                          glow_thickness, glow_intensity, glow_blur,
+    render_mesh_instanced(vao, ibo, index_count, style, glow_colors, glow_thickness, glow_intensity, glow_blur,
                           no_overlap, ubo_slots, colors, glow_colors, 1, stencil_outline);
 }
 
-void GpuChamsRenderer::end() {
+void GpuChamsRenderer::end()
+{
     glUseProgram(0);
     current_program = 0;
     glBindVertexArray(0);
@@ -770,7 +786,8 @@ void GpuChamsRenderer::end() {
     current_ibo = 0;
 }
 
-bool GpuChamsRenderer::init_blur_shader() {
+bool GpuChamsRenderer::init_blur_shader()
+{
     blur_vs = glCreateShader(GL_VERTEX_SHADER);
     if (!compile_shader(blur_vs, blur_vertex_shader_source)) return false;
 
@@ -787,7 +804,7 @@ bool GpuChamsRenderer::init_blur_shader() {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(blur_program, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Blur shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Blur shader linking error: {}", info_log);
         return false;
     }
 
@@ -797,7 +814,8 @@ bool GpuChamsRenderer::init_blur_shader() {
     return true;
 }
 
-bool GpuChamsRenderer::init_seed_shader(unsigned int vs) {
+bool GpuChamsRenderer::init_seed_shader(unsigned int vs)
+{
     seed_fs = glCreateShader(GL_FRAGMENT_SHADER);
     if (!compile_shader(seed_fs, seed_fragment_shader_source)) return false;
 
@@ -811,7 +829,7 @@ bool GpuChamsRenderer::init_seed_shader(unsigned int vs) {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(seed_program, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Seed shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Seed shader linking error: {}", info_log);
         return false;
     }
 
@@ -820,7 +838,8 @@ bool GpuChamsRenderer::init_seed_shader(unsigned int vs) {
     return true;
 }
 
-bool GpuChamsRenderer::init_composite_shader(unsigned int vs) {
+bool GpuChamsRenderer::init_composite_shader(unsigned int vs)
+{
     composite_fs = glCreateShader(GL_FRAGMENT_SHADER);
     if (!compile_shader(composite_fs, composite_fragment_shader_source)) return false;
 
@@ -834,7 +853,7 @@ bool GpuChamsRenderer::init_composite_shader(unsigned int vs) {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(composite_program, 512, nullptr, info_log);
-        std::cerr << "GPU_CHAMS: Composite shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Composite shader linking error: {}", info_log);
         return false;
     }
 
@@ -845,7 +864,8 @@ bool GpuChamsRenderer::init_composite_shader(unsigned int vs) {
     return true;
 }
 
-void GpuChamsRenderer::cleanup_fbos() {
+void GpuChamsRenderer::cleanup_fbos()
+{
     if (glow_fbo_silhouette) {
         glDeleteFramebuffers(1, &glow_fbo_silhouette);
         glow_fbo_silhouette = 0;
@@ -882,7 +902,8 @@ void GpuChamsRenderer::cleanup_fbos() {
     glow_last_h = 0;
 }
 
-void GpuChamsRenderer::update_fbos(int width, int height) {
+void GpuChamsRenderer::update_fbos(int width, int height)
+{
     if (width == glow_last_w && height == glow_last_h) {
         return;
     }
@@ -919,11 +940,11 @@ void GpuChamsRenderer::update_fbos(int width, int height) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, glow_tex_mask, 0);
 
     // Set draw buffers for MRT
-    GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    GLenum drawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     glDrawBuffers(2, drawBuffers);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "GPU_CHAMS: Failed to create glow_fbo_silhouette" << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Failed to create glow_fbo_silhouette");
     }
 
     // Create glow_fbo_a & glow_tex_a at half resolution (width/2 x height/2)
@@ -940,7 +961,7 @@ void GpuChamsRenderer::update_fbos(int width, int height) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glow_tex_a, 0);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "GPU_CHAMS: Failed to create glow_fbo_a" << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Failed to create glow_fbo_a");
     }
 
     // Create glow_fbo_b & glow_tex_b at half resolution (width/2 x height/2)
@@ -957,7 +978,7 @@ void GpuChamsRenderer::update_fbos(int width, int height) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glow_tex_b, 0);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "GPU_CHAMS: Failed to create glow_fbo_b" << std::endl;
+        FC2_LOG_ERROR("GPU_CHAMS: Failed to create glow_fbo_b");
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -967,25 +988,24 @@ void GpuChamsRenderer::update_fbos(int width, int height) {
     glow_last_h = height;
 }
 
-void GpuChamsRenderer::begin_glow_pass(int width, int height, const float* view_proj, const float* cam_pos) {
+void GpuChamsRenderer::begin_glow_pass(int width, int height, const float* view_proj, const float* cam_pos)
+{
     update_fbos(width, height);
 
     glBindFramebuffer(GL_FRAMEBUFFER, glow_fbo_silhouette);
-    GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    GLenum drawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     glDrawBuffers(2, drawBuffers);
 
-    glViewport(0, 0, width, height); // Render silhouette at full resolution
+    glViewport(0, 0, width, height);  // Render silhouette at full resolution
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
-    glUniform3fv(loc_cam_pos, 1, cam_pos);
 
     glUseProgram(flat_program_id);
     glUniformMatrix4fv(loc_flat_view_proj, 1, GL_FALSE, view_proj);
 
     glUseProgram(program_id);
+    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
+    glUniform3fv(loc_cam_pos, 1, cam_pos);
     current_program = program_id;
 
     current_vao = 0;
@@ -998,17 +1018,21 @@ void GpuChamsRenderer::begin_glow_pass(int width, int height, const float* view_
 }
 
 void GpuChamsRenderer::render_glow_silhouette(unsigned int vao, unsigned int ibo, size_t index_count,
-                                             const std::vector<source2::Mat3x4>& bones_palette,
-                                             const float* color, int ubo_slot) {
+                                              const std::vector<source2::Mat3x4>& bones_palette, const float* color,
+                                              int ubo_slot)
+{
     render_mesh(vao, ibo, index_count, bones_palette, color, 2, nullptr, 0.0f, 1.0f, 0.0f, false, ubo_slot);
 }
 
 void GpuChamsRenderer::render_glow_silhouette_instanced(unsigned int vao, unsigned int ibo, size_t index_count,
-                                                      const int* ubo_slots, const float* colors, int count) {
-    render_mesh_instanced(vao, ibo, index_count, 2, nullptr, 0.0f, 1.0f, 0.0f, false, ubo_slots, colors, nullptr, count);
+                                                        const int* ubo_slots, const float* colors, int count)
+{
+    render_mesh_instanced(vao, ibo, index_count, 2, nullptr, 0.0f, 1.0f, 0.0f, false, ubo_slots, colors, nullptr,
+                          count);
 }
 
-void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, float intensity, unsigned int target_fbo) {
+void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, float intensity, unsigned int target_fbo)
+{
     int fbo_w = (width + 1) / 2;
     int fbo_h = (height + 1) / 2;
     if (fbo_w < 1) fbo_w = 1;
@@ -1034,7 +1058,8 @@ void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, flo
 
     // Calculate kernel scale (matching vpk-parser)
     float base_kernel = 0.95f + thickness * 0.55f;
-    float kernel_scale = std::min(2.6f, std::max(0.5f, base_kernel));
+    // Scale up by 1.7x to compensate for removed second blur pass
+    float kernel_scale = std::min(2.6f, std::max(0.5f, base_kernel)) * 1.7f;
 
     float dx = 1.0f / static_cast<float>(fbo_w);
     float dy = 1.0f / static_cast<float>(fbo_h);
@@ -1042,40 +1067,26 @@ void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, flo
     glUseProgram(blur_program);
     glActiveTexture(GL_TEXTURE0);
 
-    // 2. Blur H (1.0x): glow_tex_a -> glow_tex_b
+    // 2. Blur H: glow_tex_a -> glow_tex_b
     glBindFramebuffer(GL_FRAMEBUFFER, glow_fbo_b);
     glBindTexture(GL_TEXTURE_2D, glow_tex_a);
     glUniform1i(loc_blur_texture, 0);
     glUniform2f(loc_blur_dir, dx * kernel_scale, 0.0f);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // 3. Blur V (1.0x): glow_tex_b -> glow_tex_a
+    // 3. Blur V: glow_tex_b -> glow_tex_a
     glBindFramebuffer(GL_FRAMEBUFFER, glow_fbo_a);
     glBindTexture(GL_TEXTURE_2D, glow_tex_b);
     glUniform1i(loc_blur_texture, 0);
     glUniform2f(loc_blur_dir, 0.0f, dy * kernel_scale);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // 4. Blur H (0.7x): glow_tex_a -> glow_tex_b
-    glBindFramebuffer(GL_FRAMEBUFFER, glow_fbo_b);
-    glBindTexture(GL_TEXTURE_2D, glow_tex_a);
-    glUniform1i(loc_blur_texture, 0);
-    glUniform2f(loc_blur_dir, dx * kernel_scale * 0.7f, 0.0f);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // 5. Blur V (0.7x): glow_tex_b -> glow_tex_a
-    glBindFramebuffer(GL_FRAMEBUFFER, glow_fbo_a);
-    glBindTexture(GL_TEXTURE_2D, glow_tex_b);
-    glUniform1i(loc_blur_texture, 0);
-    glUniform2f(loc_blur_dir, 0.0f, dy * kernel_scale * 0.7f);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // 6. Masked Composite: glow_tex_a + mask_tex -> screen (additive blend)
+    // 4. Masked Composite: glow_tex_a + mask_tex -> screen (additive blend)
     glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
     glViewport(0, 0, width, height);
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive blending!
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending!
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
@@ -1112,20 +1123,21 @@ void GpuChamsRenderer::end_glow_pass(int width, int height, float thickness, flo
     glDepthMask(GL_TRUE);
 }
 
-void GpuChamsRenderer::begin_body_pass(const float* view_proj, const float* cam_pos) {
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
-    glUniform3fv(loc_cam_pos, 1, cam_pos);
-
+void GpuChamsRenderer::begin_body_pass(const float* view_proj, const float* cam_pos, bool needs_stencil)
+{
     glUseProgram(flat_program_id);
     glUniformMatrix4fv(loc_flat_view_proj, 1, GL_FALSE, view_proj);
 
     glUseProgram(program_id);
+    glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
+    glUniform3fv(loc_cam_pos, 1, cam_pos);
     current_program = program_id;
 
-    glStencilMask(0xFF);
-    glClearStencil(0);
-    glClear(GL_STENCIL_BUFFER_BIT);
+    if (needs_stencil) {
+        glStencilMask(0xFF);
+        glClearStencil(0);
+        glClear(GL_STENCIL_BUFFER_BIT);
+    }
     current_stencil_ref = 0;
 
     current_vao = 0;
@@ -1139,7 +1151,8 @@ void GpuChamsRenderer::begin_body_pass(const float* view_proj, const float* cam_
     glCullFace(GL_BACK);
 }
 
-void GpuChamsRenderer::end_body_pass() {
+void GpuChamsRenderer::end_body_pass()
+{
     glDisable(GL_CULL_FACE);
     glDisable(GL_STENCIL_TEST);
     glStencilMask(0xFF);
@@ -1150,4 +1163,3 @@ void GpuChamsRenderer::end_body_pass() {
     current_vao = 0;
     current_ibo = 0;
 }
-

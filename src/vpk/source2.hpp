@@ -22,20 +22,14 @@
 #include <zstd.h>
 
 #include "meshopt/Meshoptimizer.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace source2 {
 
-struct Vec3  { float x, y, z; };
-struct Vec4  { float x, y, z, w; };
-
-struct Mat3x4 {
-    float mat[3][4]{};
-    static Mat3x4 identity() {
-        Mat3x4 m{};
-        m.mat[0][0] = m.mat[1][1] = m.mat[2][2] = 1.f;
-        return m;
-    }
-};
+using Vec3 = glm::vec3;
+using Vec4 = glm::vec4;
+using Mat3x4 = glm::mat3x4;
 
 namespace detail {
 
@@ -1488,43 +1482,39 @@ struct ModelData {
 
 namespace detail {
 
+inline glm::mat4 to_mat4(const Mat3x4& m) {
+    return glm::mat4(
+        glm::vec4(m[0][0], m[0][1], m[0][2], 0.0f),
+        glm::vec4(m[1][0], m[1][1], m[1][2], 0.0f),
+        glm::vec4(m[2][0], m[2][1], m[2][2], 0.0f),
+        glm::vec4(m[0][3], m[1][3], m[2][3], 1.0f)
+    );
+}
+
+inline Mat3x4 to_mat3x4(const glm::mat4& m) {
+    return Mat3x4(
+        glm::vec4(m[0][0], m[0][1], m[0][2], m[3][0]),
+        glm::vec4(m[1][0], m[1][1], m[1][2], m[3][1]),
+        glm::vec4(m[2][0], m[2][1], m[2][2], m[3][2])
+    );
+}
+
 inline Mat3x4 mat_from_pos_quat(const Vec3& p, const Vec4& q) {
-    const float x = q.x, y = q.y, z = q.z, w = q.w;
-    const float x2 = x+x, y2 = y+y, z2 = z+z;
-    const float xx = x*x2, xy = x*y2, xz = x*z2;
-    const float yy = y*y2, yz = y*z2, zz = z*z2;
-    const float wx = w*x2, wy = w*y2, wz = w*z2;
-    Mat3x4 m{};
-    m.mat[0][0]=1.f-(yy+zz); m.mat[0][1]=xy-wz;      m.mat[0][2]=xz+wy; m.mat[0][3]=p.x;
-    m.mat[1][0]=xy+wz;       m.mat[1][1]=1.f-(xx+zz); m.mat[1][2]=yz-wx; m.mat[1][3]=p.y;
-    m.mat[2][0]=xz-wy;       m.mat[2][1]=yz+wx;       m.mat[2][2]=1.f-(xx+yy); m.mat[2][3]=p.z;
-    return m;
+    glm::quat gq(q.w, q.x, q.y, q.z);
+    glm::mat3 rot = glm::mat3_cast(gq);
+    return Mat3x4(
+        glm::vec4(rot[0], p.x),
+        glm::vec4(rot[1], p.y),
+        glm::vec4(rot[2], p.z)
+    );
 }
 
 inline Mat3x4 mat_mul(const Mat3x4& a, const Mat3x4& b) {
-    Mat3x4 r{};
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            r.mat[i][j] = a.mat[i][0]*b.mat[0][j]
-                        + a.mat[i][1]*b.mat[1][j]
-                        + a.mat[i][2]*b.mat[2][j];
-        }
-        r.mat[i][3] += a.mat[i][3];
-    }
-    return r;
+    return to_mat3x4(to_mat4(a) * to_mat4(b));
 }
 
 inline Mat3x4 mat_invert_rigid(const Mat3x4& m) {
-    Mat3x4 inv{};
-    
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            inv.mat[i][j] = m.mat[j][i];
-    
-    inv.mat[0][3] = -(inv.mat[0][0]*m.mat[0][3] + inv.mat[0][1]*m.mat[1][3] + inv.mat[0][2]*m.mat[2][3]);
-    inv.mat[1][3] = -(inv.mat[1][0]*m.mat[0][3] + inv.mat[1][1]*m.mat[1][3] + inv.mat[1][2]*m.mat[2][3]);
-    inv.mat[2][3] = -(inv.mat[2][0]*m.mat[0][3] + inv.mat[2][1]*m.mat[1][3] + inv.mat[2][2]*m.mat[2][3]);
-    return inv;
+    return to_mat3x4(glm::inverse(to_mat4(m)));
 }
 
 inline void compute_inv_bind_poses(ModelData& md) {

@@ -10,8 +10,13 @@ namespace MapParser {
 struct Vec2 { float x, y; };
 struct Vec3 { float x, y, z; };
 
+struct Vertex {
+    Vec3 pos;
+    float type_id;
+};
+
 struct Triangle {
-    Vec3 v0, v1, v2;
+    Vertex v0, v1, v2;
 };
 
 struct MapMesh {
@@ -40,6 +45,7 @@ std::vector<MapEntry> ListAllMaps();
 
 bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                               std::vector<Triangle>& out,
-                              std::vector<Triangle>& out_visual);
+                              std::vector<Triangle>& out_visual,
+                              float type_id = 0.0f);
 
 }

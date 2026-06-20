@@ -1,8 +1,10 @@
 #include "esp_renderer.hpp"
-#include "gl_loader.hpp"
-#include <iostream>
+
 #include <cmath>
 #include <cstring>
+
+#include "gl_loader.hpp"
+#include "logger.hpp"
 
 static const char* esp_vertex_shader = R"glsl(
 #version 330 core
@@ -85,27 +87,33 @@ void main() {
 }
 )glsl";
 
-static Vec3 catmull_rom_3d(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t) {
+static Vec3 catmull_rom_3d(const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t)
+{
     float t2 = t * t;
     float t3 = t2 * t;
-    return {
-        0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t + (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 + (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3),
-        0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t + (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 + (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3),
-        0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t + (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 + (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3)
-    };
+    return {0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t + (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 +
+                    (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3),
+            0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t + (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 +
+                    (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3),
+            0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t + (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 +
+                    (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3)};
 }
 
-static float catmull_rom_1d(float p0, float p1, float p2, float p3, float t) {
+static float catmull_rom_1d(float p0, float p1, float p2, float p3, float t)
+{
     float t2 = t * t;
     float t3 = t2 * t;
-    return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+    return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                   (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
 }
 
-EspRenderer::~EspRenderer() {
+EspRenderer::~EspRenderer()
+{
     cleanup();
 }
 
-bool EspRenderer::compile_shader(unsigned int shader, const char* source) {
+bool EspRenderer::compile_shader(unsigned int shader, const char* source)
+{
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
     int success;
@@ -113,13 +121,14 @@ bool EspRenderer::compile_shader(unsigned int shader, const char* source) {
     if (!success) {
         char log[512];
         glGetShaderInfoLog(shader, 512, nullptr, log);
-        std::cerr << "ESP_RENDERER: Shader compilation error: " << log << std::endl;
+        FC2_LOG_ERROR("ESP_RENDERER: Shader compilation error: {}", log);
         return false;
     }
     return true;
 }
 
-bool EspRenderer::link_program() {
+bool EspRenderer::link_program()
+{
     program_id = glCreateProgram();
     glAttachShader(program_id, vertex_shader);
     glAttachShader(program_id, fragment_shader);
@@ -129,13 +138,14 @@ bool EspRenderer::link_program() {
     if (!success) {
         char log[512];
         glGetProgramInfoLog(program_id, 512, nullptr, log);
-        std::cerr << "ESP_RENDERER: Shader linking error: " << log << std::endl;
+        FC2_LOG_ERROR("ESP_RENDERER: Shader linking error: {}", log);
         return false;
     }
     return true;
 }
 
-bool EspRenderer::link_custom_program(unsigned int& prog_id, const char* vs_src, const char* fs_src) {
+bool EspRenderer::link_custom_program(unsigned int& prog_id, const char* vs_src, const char* fs_src)
+{
     unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
     if (!compile_shader(vs, vs_src)) return false;
 
@@ -155,13 +165,14 @@ bool EspRenderer::link_custom_program(unsigned int& prog_id, const char* vs_src,
     if (!success) {
         char log[512];
         glGetProgramInfoLog(prog_id, 512, nullptr, log);
-        std::cerr << "ESP_RENDERER: Custom program linking error: " << log << std::endl;
+        FC2_LOG_ERROR("ESP_RENDERER: Custom program linking error: {}", log);
         return false;
     }
     return true;
 }
 
-bool EspRenderer::init() {
+bool EspRenderer::init()
+{
     vertex_shader = glCreateShader(GL_VERTEX_SHADER);
     if (!compile_shader(vertex_shader, esp_vertex_shader)) return false;
 
@@ -180,6 +191,10 @@ bool EspRenderer::init() {
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
+    // Preallocate VBO to 64KB
+    vbo_capacity = 64 * 1024;
+    glBufferData(GL_ARRAY_BUFFER, vbo_capacity, nullptr, GL_STREAM_DRAW);
+
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(EspVertex), (void*)0);
     glEnableVertexAttribArray(1);
@@ -196,20 +211,12 @@ bool EspRenderer::init() {
     loc_inst_proj = glGetUniformLocation(instanced_program_id, "uProj");
 
     // Create static Unit Box VAO/VBO
-    const float unit_box[] = {
-        -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
-         1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,
-         1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
-        -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,
-        -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
-         1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
-        -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,
-         1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,
-         1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
-        -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f
-    };
+    const float unit_box[] = {-1.0f, -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f,
+                              1.0f,  1.0f,  -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  -1.0f, -1.0f, -1.0f, -1.0f,
+                              -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  1.0f,
+                              1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  -1.0f, -1.0f, 1.0f,
+                              -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, 1.0f,  1.0f,  -1.0f, -1.0f, 1.0f,  -1.0f, 1.0f,
+                              1.0f,  1.0f,  -1.0f, 1.0f,  1.0f,  1.0f,  -1.0f, 1.0f,  -1.0f, -1.0f, 1.0f,  1.0f};
     glGenVertexArrays(1, &unit_box_vao);
     glGenBuffers(1, &unit_box_vbo);
     glBindVertexArray(unit_box_vao);
@@ -239,8 +246,13 @@ bool EspRenderer::init() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 
-    // Create dynamic Instance VBO
+    // Create dynamic Instance VBO with pre-allocated max capacity
     glGenBuffers(1, &instance_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
+    glBufferData(GL_ARRAY_BUFFER, 1024 * sizeof(BoxInstance), nullptr, GL_DYNAMIC_DRAW);
+
+    box_instances.reserve(1024);
+    circle_instances.reserve(1024);
 
     // Bind instance attributes to unit box VAO
     glBindVertexArray(unit_box_vao);
@@ -274,22 +286,59 @@ bool EspRenderer::init() {
     return true;
 }
 
-void EspRenderer::cleanup() {
+void EspRenderer::cleanup()
+{
     clear();
     line_batches.clear();
-    if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
-    if (vbo) { glDeleteBuffers(1, &vbo); vbo = 0; }
-    if (vertex_shader) { glDeleteShader(vertex_shader); vertex_shader = 0; }
-    if (fragment_shader) { glDeleteShader(fragment_shader); fragment_shader = 0; }
-    if (program_id) { glDeleteProgram(program_id); program_id = 0; }
+    if (vao) {
+        glDeleteVertexArrays(1, &vao);
+        vao = 0;
+    }
+    if (vbo) {
+        glDeleteBuffers(1, &vbo);
+        vbo = 0;
+    }
+    if (vertex_shader) {
+        glDeleteShader(vertex_shader);
+        vertex_shader = 0;
+    }
+    if (fragment_shader) {
+        glDeleteShader(fragment_shader);
+        fragment_shader = 0;
+    }
+    if (program_id) {
+        glDeleteProgram(program_id);
+        program_id = 0;
+    }
 
-    if (unit_box_vao) { glDeleteVertexArrays(1, &unit_box_vao); unit_box_vao = 0; }
-    if (unit_box_vbo) { glDeleteBuffers(1, &unit_box_vbo); unit_box_vbo = 0; }
-    if (unit_circle_vao) { glDeleteVertexArrays(1, &unit_circle_vao); unit_circle_vao = 0; }
-    if (unit_circle_vbo) { glDeleteBuffers(1, &unit_circle_vbo); unit_circle_vbo = 0; }
-    if (instance_vbo) { glDeleteBuffers(1, &instance_vbo); instance_vbo = 0; }
-    if (trajectory_program_id) { glDeleteProgram(trajectory_program_id); trajectory_program_id = 0; }
-    if (instanced_program_id) { glDeleteProgram(instanced_program_id); instanced_program_id = 0; }
+    if (unit_box_vao) {
+        glDeleteVertexArrays(1, &unit_box_vao);
+        unit_box_vao = 0;
+    }
+    if (unit_box_vbo) {
+        glDeleteBuffers(1, &unit_box_vbo);
+        unit_box_vbo = 0;
+    }
+    if (unit_circle_vao) {
+        glDeleteVertexArrays(1, &unit_circle_vao);
+        unit_circle_vao = 0;
+    }
+    if (unit_circle_vbo) {
+        glDeleteBuffers(1, &unit_circle_vbo);
+        unit_circle_vbo = 0;
+    }
+    if (instance_vbo) {
+        glDeleteBuffers(1, &instance_vbo);
+        instance_vbo = 0;
+    }
+    if (trajectory_program_id) {
+        glDeleteProgram(trajectory_program_id);
+        trajectory_program_id = 0;
+    }
+    if (instanced_program_id) {
+        glDeleteProgram(instanced_program_id);
+        instanced_program_id = 0;
+    }
 
     for (auto& t : gpu_trajectories) {
         if (t.vao) glDeleteVertexArrays(1, &t.vao);
@@ -298,7 +347,8 @@ void EspRenderer::cleanup() {
     gpu_trajectories.clear();
 }
 
-void EspRenderer::clear() {
+void EspRenderer::clear()
+{
     for (auto& p : line_batches) {
         p.second.clear();
     }
@@ -307,24 +357,40 @@ void EspRenderer::clear() {
     circle_instances.clear();
 }
 
-void EspRenderer::set_projection(const float* proj_matrix) {
+void EspRenderer::set_projection(const float* proj_matrix)
+{
     std::memcpy(current_proj, proj_matrix, sizeof(float) * 16);
 }
 
-void EspRenderer::set_ortho(float left, float right, float bottom, float top) {
-    float ortho[16] = {
-        2.0f / (right - left), 0.0f, 0.0f, 0.0f,
-        0.0f, 2.0f / (top - bottom), 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        -(right + left) / (right - left), -(top + bottom) / (top - bottom), 0.0f, 1.0f
-    };
+void EspRenderer::set_ortho(float left, float right, float bottom, float top)
+{
+    float ortho[16] = {2.0f / (right - left),
+                       0.0f,
+                       0.0f,
+                       0.0f,
+                       0.0f,
+                       2.0f / (top - bottom),
+                       0.0f,
+                       0.0f,
+                       0.0f,
+                       0.0f,
+                       1.0f,
+                       0.0f,
+                       -(right + left) / (right - left),
+                       -(top + bottom) / (top - bottom),
+                       0.0f,
+                       1.0f};
     set_projection(ortho);
 }
 
-void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const float* color, float thickness) {
+void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const float* color, float thickness)
+{
     std::vector<EspVertex>* batch = nullptr;
     for (auto& p : line_batches) {
-        if (p.first == thickness) { batch = &p.second; break; }
+        if (p.first == thickness) {
+            batch = &p.second;
+            break;
+        }
     }
     if (!batch) {
         line_batches.emplace_back(thickness, std::vector<EspVertex>{});
@@ -334,7 +400,9 @@ void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const floa
     batch->push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
 }
 
-void EspRenderer::add_quad_2d(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4, const float* color) {
+void EspRenderer::add_quad_2d(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4,
+                              const float* color)
+{
     triangle_vertices.push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
     triangle_vertices.push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
     triangle_vertices.push_back({x3, y3, 0.0f, color[0], color[1], color[2], color[3]});
@@ -344,11 +412,14 @@ void EspRenderer::add_quad_2d(float x1, float y1, float x2, float y2, float x3, 
     triangle_vertices.push_back({x4, y4, 0.0f, color[0], color[1], color[2], color[3]});
 }
 
-void EspRenderer::add_rect_2d(float x, float y, float w, float h, const float* color) {
+void EspRenderer::add_rect_2d(float x, float y, float w, float h, const float* color)
+{
     add_quad_2d(x, y, x + w, y, x + w, y + h, x, y + h, color);
 }
 
-void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const float* color, float thickness, bool draw_outline) {
+void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const float* color, float thickness,
+                                       bool draw_outline)
+{
     float ix = std::round(x);
     float iy = std::round(y);
     float iw = std::round(w);
@@ -363,96 +434,63 @@ void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const
 
         // Outer outline quads (thickness 1.0f)
         // Top outer:
-        add_quad_2d(ix - half_t - 1.0f, iy - half_t - 1.0f,
-                    ix + iw + half_t + 1.0f, iy - half_t - 1.0f,
-                    ix + iw + half_t + 1.0f, iy - half_t,
-                    ix - half_t - 1.0f, iy - half_t,
-                    black);
+        add_quad_2d(ix - half_t - 1.0f, iy - half_t - 1.0f, ix + iw + half_t + 1.0f, iy - half_t - 1.0f,
+                    ix + iw + half_t + 1.0f, iy - half_t, ix - half_t - 1.0f, iy - half_t, black);
 
         // Bottom outer:
-        add_quad_2d(ix - half_t - 1.0f, iy + ih + half_t,
-                    ix + iw + half_t + 1.0f, iy + ih + half_t,
-                    ix + iw + half_t + 1.0f, iy + ih + half_t + 1.0f,
-                    ix - half_t - 1.0f, iy + ih + half_t + 1.0f,
+        add_quad_2d(ix - half_t - 1.0f, iy + ih + half_t, ix + iw + half_t + 1.0f, iy + ih + half_t,
+                    ix + iw + half_t + 1.0f, iy + ih + half_t + 1.0f, ix - half_t - 1.0f, iy + ih + half_t + 1.0f,
                     black);
 
         // Left outer:
-        add_quad_2d(ix - half_t - 1.0f, iy - half_t,
-                    ix - half_t, iy - half_t,
-                    ix - half_t, iy + ih + half_t,
-                    ix - half_t - 1.0f, iy + ih + half_t,
-                    black);
+        add_quad_2d(ix - half_t - 1.0f, iy - half_t, ix - half_t, iy - half_t, ix - half_t, iy + ih + half_t,
+                    ix - half_t - 1.0f, iy + ih + half_t, black);
 
         // Right outer:
-        add_quad_2d(ix + iw + half_t, iy - half_t,
-                    ix + iw + half_t + 1.0f, iy - half_t,
-                    ix + iw + half_t + 1.0f, iy + ih + half_t,
-                    ix + iw + half_t, iy + ih + half_t,
-                    black);
+        add_quad_2d(ix + iw + half_t, iy - half_t, ix + iw + half_t + 1.0f, iy - half_t, ix + iw + half_t + 1.0f,
+                    iy + ih + half_t, ix + iw + half_t, iy + ih + half_t, black);
 
         // Inner outline quads (thickness 1.0f)
         if (iw > t + 2.0f && ih > t + 2.0f) {
             // Top inner:
-            add_quad_2d(ix + half_t, iy + half_t,
-                        ix + iw - half_t, iy + half_t,
-                        ix + iw - half_t, iy + half_t + 1.0f,
-                        ix + half_t, iy + half_t + 1.0f,
-                        black);
+            add_quad_2d(ix + half_t, iy + half_t, ix + iw - half_t, iy + half_t, ix + iw - half_t, iy + half_t + 1.0f,
+                        ix + half_t, iy + half_t + 1.0f, black);
 
             // Bottom inner:
-            add_quad_2d(ix + half_t, iy + ih - half_t - 1.0f,
-                        ix + iw - half_t, iy + ih - half_t - 1.0f,
-                        ix + iw - half_t, iy + ih - half_t,
-                        ix + half_t, iy + ih - half_t,
-                        black);
+            add_quad_2d(ix + half_t, iy + ih - half_t - 1.0f, ix + iw - half_t, iy + ih - half_t - 1.0f,
+                        ix + iw - half_t, iy + ih - half_t, ix + half_t, iy + ih - half_t, black);
 
             // Left inner:
-            add_quad_2d(ix + half_t, iy + half_t + 1.0f,
-                        ix + half_t + 1.0f, iy + half_t + 1.0f,
-                        ix + half_t + 1.0f, iy + ih - half_t - 1.0f,
-                        ix + half_t, iy + ih - half_t - 1.0f,
-                        black);
+            add_quad_2d(ix + half_t, iy + half_t + 1.0f, ix + half_t + 1.0f, iy + half_t + 1.0f, ix + half_t + 1.0f,
+                        iy + ih - half_t - 1.0f, ix + half_t, iy + ih - half_t - 1.0f, black);
 
             // Right inner:
-            add_quad_2d(ix + iw - half_t - 1.0f, iy + half_t + 1.0f,
-                        ix + iw - half_t, iy + half_t + 1.0f,
-                        ix + iw - half_t, iy + ih - half_t - 1.0f,
-                        ix + iw - half_t - 1.0f, iy + ih - half_t - 1.0f,
+            add_quad_2d(ix + iw - half_t - 1.0f, iy + half_t + 1.0f, ix + iw - half_t, iy + half_t + 1.0f,
+                        ix + iw - half_t, iy + ih - half_t - 1.0f, ix + iw - half_t - 1.0f, iy + ih - half_t - 1.0f,
                         black);
         }
     }
 
     // Main box quads (thickness t)
     // Top main:
-    add_quad_2d(ix - half_t, iy - half_t,
-                ix + iw + half_t, iy - half_t,
-                ix + iw + half_t, iy + half_t,
-                ix - half_t, iy + half_t,
-                color);
+    add_quad_2d(ix - half_t, iy - half_t, ix + iw + half_t, iy - half_t, ix + iw + half_t, iy + half_t, ix - half_t,
+                iy + half_t, color);
 
     // Bottom main:
-    add_quad_2d(ix - half_t, iy + ih - half_t,
-                ix + iw + half_t, iy + ih - half_t,
-                ix + iw + half_t, iy + ih + half_t,
-                ix - half_t, iy + ih + half_t,
-                color);
+    add_quad_2d(ix - half_t, iy + ih - half_t, ix + iw + half_t, iy + ih - half_t, ix + iw + half_t, iy + ih + half_t,
+                ix - half_t, iy + ih + half_t, color);
 
     // Left main:
-    add_quad_2d(ix - half_t, iy + half_t,
-                ix + half_t, iy + half_t,
-                ix + half_t, iy + ih - half_t,
-                ix - half_t, iy + ih - half_t,
-                color);
+    add_quad_2d(ix - half_t, iy + half_t, ix + half_t, iy + half_t, ix + half_t, iy + ih - half_t, ix - half_t,
+                iy + ih - half_t, color);
 
     // Right main:
-    add_quad_2d(ix + iw - half_t, iy + half_t,
-                ix + iw + half_t, iy + half_t,
-                ix + iw + half_t, iy + ih - half_t,
-                ix + iw - half_t, iy + ih - half_t,
-                color);
+    add_quad_2d(ix + iw - half_t, iy + half_t, ix + iw + half_t, iy + half_t, ix + iw + half_t, iy + ih - half_t,
+                ix + iw - half_t, iy + ih - half_t, color);
 }
 
-void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float health, const OverlayConfig& cfg) {
+void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float health, const OverlayConfig& cfg)
+{
     (void)w;
     if (health < 0.0f) health = 0.0f;
     if (health > 100.0f) health = 100.0f;
@@ -491,8 +529,9 @@ void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float he
     add_rect_2d(bar_x, fill_y, bar_w, fill_h, color);
 }
 
-void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color, float thickness) {
-    constexpr float EPSILON = 0.05f; // Near plane clip threshold in homogeneous coordinates
+void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color, float thickness)
+{
+    constexpr float EPSILON = 0.05f;  // Near plane clip threshold in homogeneous coordinates
 
     // Use column-major indexing since current_proj (gl_vp) is column-major
     float w1 = current_proj[3] * p1.x + current_proj[7] * p1.y + current_proj[11] * p1.z + current_proj[15];
@@ -507,38 +546,37 @@ void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color
     // 2. Near-plane clipping
     if (w1 < EPSILON) {
         float t = (EPSILON - w1) / (w2 - w1);
-        clip_p1 = {
-            p1.x + t * (p2.x - p1.x),
-            p1.y + t * (p2.y - p1.y),
-            p1.z + t * (p2.z - p1.z)
-        };
+        clip_p1 = {p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y), p1.z + t * (p2.z - p1.z)};
         w1 = EPSILON;
     } else if (w2 < EPSILON) {
         float t = (EPSILON - w2) / (w1 - w2);
-        clip_p2 = {
-            p2.x + t * (p1.x - p2.x),
-            p2.y + t * (p1.y - p2.y),
-            p2.z + t * (p1.z - p2.z)
-        };
+        clip_p2 = {p2.x + t * (p1.x - p2.x), p2.y + t * (p1.y - p2.y), p2.z + t * (p1.z - p2.z)};
         w2 = EPSILON;
     }
 
     // 3. Frustum culling (only check if both are in front of the camera, which is guaranteed now)
-    float x1 = current_proj[0] * clip_p1.x + current_proj[4] * clip_p1.y + current_proj[8] * clip_p1.z + current_proj[12];
-    float x2 = current_proj[0] * clip_p2.x + current_proj[4] * clip_p2.y + current_proj[8] * clip_p2.z + current_proj[12];
+    float x1 =
+        current_proj[0] * clip_p1.x + current_proj[4] * clip_p1.y + current_proj[8] * clip_p1.z + current_proj[12];
+    float x2 =
+        current_proj[0] * clip_p2.x + current_proj[4] * clip_p2.y + current_proj[8] * clip_p2.z + current_proj[12];
 
     if (x1 < -w1 && x2 < -w2) return;
     if (x1 > w1 && x2 > w2) return;
 
-    float y1 = current_proj[1] * clip_p1.x + current_proj[5] * clip_p1.y + current_proj[9] * clip_p1.z + current_proj[13];
-    float y2 = current_proj[1] * clip_p2.x + current_proj[5] * clip_p2.y + current_proj[9] * clip_p2.z + current_proj[13];
+    float y1 =
+        current_proj[1] * clip_p1.x + current_proj[5] * clip_p1.y + current_proj[9] * clip_p1.z + current_proj[13];
+    float y2 =
+        current_proj[1] * clip_p2.x + current_proj[5] * clip_p2.y + current_proj[9] * clip_p2.z + current_proj[13];
 
     if (y1 < -w1 && y2 < -w2) return;
     if (y1 > w1 && y2 > w2) return;
 
     std::vector<EspVertex>* batch = nullptr;
     for (auto& p : line_batches) {
-        if (p.first == thickness) { batch = &p.second; break; }
+        if (p.first == thickness) {
+            batch = &p.second;
+            break;
+        }
     }
     if (!batch) {
         line_batches.emplace_back(thickness, std::vector<EspVertex>{});
@@ -548,7 +586,10 @@ void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color
     batch->push_back({clip_p2.x, clip_p2.y, clip_p2.z, color[0], color[1], color[2], color[3]});
 }
 
-void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_positions, const std::vector<int>& chain, const std::vector<float>& vis, int player_idx, const OverlayConfig& cfg, bool for_glow, float pulse_factor, const float* override_glow_color) {
+void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_positions, const std::vector<int>& chain,
+                                        const std::vector<float>& vis, int player_idx, const OverlayConfig& cfg,
+                                        bool for_glow, float pulse_factor, const float* override_glow_color)
+{
     Vec3 points[8];
     float bone_vis[8];
     int point_count = 0;
@@ -572,7 +613,7 @@ void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_posit
     float thickness = cfg.esp_skeleton_thickness;
 
     if (cfg.esp_rounded_skeleton) {
-        Vec3 ctrl_pts[10]; // max 8 + 2 padding
+        Vec3 ctrl_pts[10];  // max 8 + 2 padding
         float ctrl_vis[10];
         ctrl_pts[0] = points[0];
         ctrl_vis[0] = bone_vis[0];
@@ -653,11 +694,8 @@ void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_posit
 
                 for (int s = 1; s <= steps; ++s) {
                     float t = static_cast<float>(s) / steps;
-                    Vec3 curr_step = {
-                        pt1.x + t * (pt2.x - pt1.x),
-                        pt1.y + t * (pt2.y - pt1.y),
-                        pt1.z + t * (pt2.z - pt1.z)
-                    };
+                    Vec3 curr_step = {pt1.x + t * (pt2.x - pt1.x), pt1.y + t * (pt2.y - pt1.y),
+                                      pt1.z + t * (pt2.z - pt1.z)};
                     float curr_v = v1 + t * (v2 - v1);
                     float mid_v = (prev_v + curr_v) * 0.5f;
 
@@ -672,82 +710,112 @@ void EspRenderer::add_skeleton_chain_3d(const std::vector<Vec3>& sanitized_posit
     }
 }
 
-void EspRenderer::add_skeleton_3d(const std::vector<Vec3>& sanitized_positions, int player_idx, const std::vector<float>& vis, const OverlayConfig& cfg, bool for_glow, float pulse_factor, const float* override_glow_color) {
+void EspRenderer::add_skeleton_3d(const std::vector<Vec3>& sanitized_positions, int player_idx,
+                                  const std::vector<float>& vis, const OverlayConfig& cfg, bool for_glow,
+                                  float pulse_factor, const float* override_glow_color)
+{
     static const std::vector<std::vector<int>> bone_chains = {
-        {7, 6, 23, 1},
-        {23, 10, 11},
-        {23, 14, 15},
-        {1, 18, 19},
-        {1, 21, 22}
-    };
+        {7, 6, 23, 1}, {23, 10, 11}, {23, 14, 15}, {1, 18, 19}, {1, 21, 22}};
 
     for (const auto& chain : bone_chains) {
-        add_skeleton_chain_3d(sanitized_positions, chain, vis, player_idx, cfg, for_glow, pulse_factor, override_glow_color);
+        add_skeleton_chain_3d(sanitized_positions, chain, vis, player_idx, cfg, for_glow, pulse_factor,
+                              override_glow_color);
     }
 }
 
-void EspRenderer::flush_lines() {
+void EspRenderer::upload_lines()
+{
     if (line_batches.empty()) return;
 
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_proj, 1, GL_FALSE, current_proj);
-    glUniform1i(loc_use_override, 0);
+    size_t total_vertices = 0;
+    for (const auto& pair : line_batches) {
+        total_vertices += pair.second.size();
+    }
+    if (total_vertices == 0) return;
+
+    size_t required_size = total_vertices * sizeof(EspVertex);
 
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
+    if (required_size > vbo_capacity) {
+        vbo_capacity = required_size * 2;
+        glBufferData(GL_ARRAY_BUFFER, vbo_capacity, nullptr, GL_STREAM_DRAW);
+    }
+
+    size_t offset = 0;
+    for (const auto& pair : line_batches) {
+        const auto& vertices = pair.second;
+        if (vertices.empty()) continue;
+
+        size_t bytes = vertices.size() * sizeof(EspVertex);
+        glBufferSubData(GL_ARRAY_BUFFER, offset, bytes, vertices.data());
+        offset += bytes;
+    }
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void EspRenderer::draw_lines_override(const float* override_color)
+{
+    if (line_batches.empty()) return;
+
+    glUseProgram(program_id);
+    glUniformMatrix4fv(loc_proj, 1, GL_FALSE, current_proj);
+    glUniform1i(loc_use_override, override_color ? 1 : 0);
+    if (override_color) {
+        glUniform4fv(loc_color_override, 1, override_color);
+    }
+
+    glBindVertexArray(vao);
+    
+    size_t offset = 0;
     for (const auto& pair : line_batches) {
         float thickness = pair.first;
         const auto& vertices = pair.second;
         if (vertices.empty()) continue;
 
         glLineWidth(thickness);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(EspVertex), vertices.data(), GL_STREAM_DRAW);
-        glDrawArrays(GL_LINES, 0, (GLsizei)vertices.size());
+        glDrawArrays(GL_LINES, (GLint)(offset / sizeof(EspVertex)), (GLsizei)vertices.size());
+        offset += vertices.size() * sizeof(EspVertex);
     }
 
     glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glUseProgram(0);
 }
 
-void EspRenderer::flush_lines_override(const float* override_color) {
-    if (line_batches.empty()) return;
-
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_proj, 1, GL_FALSE, current_proj);
-    glUniform1i(loc_use_override, 1);
-    glUniform4fv(loc_color_override, 1, override_color);
-
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-    for (const auto& pair : line_batches) {
-        float thickness = pair.first;
-        const auto& vertices = pair.second;
-        if (vertices.empty()) continue;
-
-        glLineWidth(thickness);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(EspVertex), vertices.data(), GL_STREAM_DRAW);
-        glDrawArrays(GL_LINES, 0, (GLsizei)vertices.size());
-    }
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glUseProgram(0);
+void EspRenderer::flush_lines()
+{
+    upload_lines();
+    draw_lines_override(nullptr);
 }
 
-void EspRenderer::flush_triangles() {
+void EspRenderer::flush_lines_override(const float* override_color)
+{
+    upload_lines();
+    draw_lines_override(override_color);
+}
+
+void EspRenderer::flush_triangles()
+{
     if (triangle_vertices.empty()) return;
 
-    glUseProgram(program_id);
-    glUniformMatrix4fv(loc_proj, 1, GL_FALSE, current_proj);
-    glUniform1i(loc_use_override, 0);
+    size_t required_size = triangle_vertices.size() * sizeof(EspVertex);
 
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-    glBufferData(GL_ARRAY_BUFFER, triangle_vertices.size() * sizeof(EspVertex), triangle_vertices.data(), GL_STREAM_DRAW);
+    if (required_size > vbo_capacity) {
+        vbo_capacity = required_size * 2;
+        glBufferData(GL_ARRAY_BUFFER, vbo_capacity, nullptr, GL_STREAM_DRAW);
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0, required_size, triangle_vertices.data());
+
+    glUseProgram(program_id);
+    glUniformMatrix4fv(loc_proj, 1, GL_FALSE, current_proj);
+    glUniform1i(loc_use_override, 0);
+
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)triangle_vertices.size());
 
     glBindVertexArray(0);
@@ -755,7 +823,9 @@ void EspRenderer::flush_triangles() {
     glUseProgram(0);
 }
 
-void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std::vector<Vec3>& points, const float* color) {
+void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std::vector<Vec3>& points,
+                                    const float* color)
+{
     if (points.empty()) return;
 
     std::vector<TrajectoryVertex> vertices;
@@ -763,11 +833,7 @@ void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std
 
     for (size_t i = 0; i < points.size(); ++i) {
         float progress = points.size() > 1 ? static_cast<float>(i) / (points.size() - 1) : 1.0f;
-        vertices.push_back({
-            points[i].x, points[i].y, points[i].z,
-            color[0], color[1], color[2], color[3],
-            progress
-        });
+        vertices.push_back({points[i].x, points[i].y, points[i].z, color[0], color[1], color[2], color[3], progress});
     }
 
     GpuTrajectory traj;
@@ -800,7 +866,8 @@ void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std
     gpu_trajectories.push_back(traj);
 }
 
-void EspRenderer::draw_gpu_trajectory(uint32_t handle, float erase_progress, float fade_alpha) {
+void EspRenderer::draw_gpu_trajectory(uint32_t handle, float erase_progress, float fade_alpha)
+{
     for (const auto& traj : gpu_trajectories) {
         if (traj.entity_handle == handle) {
             glUseProgram(trajectory_program_id);
@@ -818,7 +885,8 @@ void EspRenderer::draw_gpu_trajectory(uint32_t handle, float erase_progress, flo
     }
 }
 
-void EspRenderer::prune_gpu_trajectories(const std::vector<uint32_t>& active_handles) {
+void EspRenderer::prune_gpu_trajectories(const std::vector<uint32_t>& active_handles)
+{
     std::vector<GpuTrajectory> next_gpu_trajectories;
     for (auto& traj : gpu_trajectories) {
         bool still_needed = false;
@@ -838,15 +906,18 @@ void EspRenderer::prune_gpu_trajectories(const std::vector<uint32_t>& active_han
     gpu_trajectories = std::move(next_gpu_trajectories);
 }
 
-void EspRenderer::add_box_instance(const Vec3& center, float size, const float* color) {
+void EspRenderer::add_box_instance(const Vec3& center, float size, const float* color)
+{
     box_instances.push_back({center, size, {color[0], color[1], color[2], color[3]}});
 }
 
-void EspRenderer::add_circle_instance(const Vec3& center, float radius, const float* color) {
+void EspRenderer::add_circle_instance(const Vec3& center, float radius, const float* color)
+{
     circle_instances.push_back({center, radius, {color[0], color[1], color[2], color[3]}});
 }
 
-void EspRenderer::flush_instances() {
+void EspRenderer::flush_instances()
+{
     if (box_instances.empty() && circle_instances.empty()) return;
 
     glUseProgram(instanced_program_id);
@@ -855,19 +926,21 @@ void EspRenderer::flush_instances() {
     // 1. Draw Instanced Boxes
     if (!box_instances.empty()) {
         glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
-        glBufferData(GL_ARRAY_BUFFER, box_instances.size() * sizeof(BoxInstance), box_instances.data(), GL_STREAM_DRAW);
+        GLsizei count = (GLsizei)std::min(box_instances.size(), (size_t)1024);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(BoxInstance), box_instances.data());
 
         glBindVertexArray(unit_box_vao);
-        glDrawArraysInstanced(GL_LINES, 0, 24, (GLsizei)box_instances.size());
+        glDrawArraysInstanced(GL_LINES, 0, 24, count);
     }
 
     // 2. Draw Instanced Circles
     if (!circle_instances.empty()) {
         glBindBuffer(GL_ARRAY_BUFFER, instance_vbo);
-        glBufferData(GL_ARRAY_BUFFER, circle_instances.size() * sizeof(CircleInstance), circle_instances.data(), GL_STREAM_DRAW);
+        GLsizei count = (GLsizei)std::min(circle_instances.size(), (size_t)1024);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, count * sizeof(CircleInstance), circle_instances.data());
 
         glBindVertexArray(unit_circle_vao);
-        glDrawArraysInstanced(GL_LINES, 0, 48, (GLsizei)circle_instances.size());
+        glDrawArraysInstanced(GL_LINES, 0, 48, count);
     }
 
     glBindVertexArray(0);

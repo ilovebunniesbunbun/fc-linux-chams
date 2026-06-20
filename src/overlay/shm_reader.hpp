@@ -10,14 +10,24 @@
 #include <semaphore.h>
 #include <cstddef>
 #include <thread>
+#include <glm/glm.hpp>
 
-struct Vec3 {
-    float x, y, z;
-};
+namespace shm {
+    constexpr std::size_t MAX_PLAYERS = 64;
+    constexpr std::size_t MAX_BONES = 128;
+    constexpr std::size_t MAX_PROJECTILES = 8;
+    constexpr std::size_t MAX_MODEL_NAME = 64;
+    constexpr std::size_t MAX_MAP_NAME = 64;
+    constexpr std::size_t VIEW_MATRIX_SIZE = 16;
+}
 
-struct Vec4 {
-    float x, y, z, w;
-};
+using Vec3 = glm::vec3;
+using Vec4 = glm::vec4;
+
+static_assert(sizeof(Vec3) == 12, "SHM wire format: Vec3 must be 12 bytes");
+static_assert(sizeof(Vec4) == 16, "SHM wire format: Vec4 must be 16 bytes");
+static_assert(std::is_trivially_copyable_v<Vec3>, "SHM wire format: Vec3 must be trivially copyable");
+static_assert(std::is_trivially_copyable_v<Vec4>, "SHM wire format: Vec4 must be trivially copyable");
 
 // Full bone transform: position + quaternion rotation
 struct BoneTransform {
@@ -52,16 +62,16 @@ struct PlayerData {
     int active;
     int has_defuser;
     Vec3 origin;
-    char model_name[64];        // e.g. "ctm_sas", "tm_leet" for mesh lookup
+    char model_name[shm::MAX_MODEL_NAME];        // e.g. "ctm_sas", "tm_leet" for mesh lookup
     int bone_count;             // actual bone count for this player
-    BoneTransform bones[128];   // full skeletal transforms
+    BoneTransform bones[shm::MAX_BONES];   // full skeletal transforms
 };
 
 struct ShmPacket {
     uint32_t frame_index;
-    float view_matrix[16];
+    float view_matrix[shm::VIEW_MATRIX_SIZE];
     Vec3 local_eye;
-    char map_name[64];
+    char map_name[shm::MAX_MAP_NAME];
     
     // --- Local Player Throw State ---
     uint8_t held_grenade_type;  // GrenadeType (0 if none held/pin not pulled)
@@ -71,12 +81,16 @@ struct ShmPacket {
     
     // --- In-Flight Projectiles ---
     int projectile_count;
-    InFlightProjectile projectiles[8]; // Max 8 active projectiles tracked concurrently
+    InFlightProjectile projectiles[shm::MAX_PROJECTILES]; // Max 8 active projectiles tracked concurrently
     
     int player_count;
-    PlayerData players[64];
+    PlayerData players[shm::MAX_PLAYERS];
 };
 #pragma pack(pop)
+
+static_assert(sizeof(InFlightProjectile) == 46, "InFlightProjectile packing mismatch");
+static_assert(sizeof(PlayerData) == 3680, "PlayerData packing mismatch");
+static_assert(sizeof(ShmPacket) == 236058, "ShmPacket packing mismatch");
 
 #include <semaphore.h>
 
@@ -166,7 +180,7 @@ public:
             std::memcpy(&out_packet, mapped_data, offsetof(ShmPacket, players));
             int copy_count = out_packet.player_count;
             if (copy_count < 0) copy_count = 0;
-            if (copy_count > 64) copy_count = 64;
+            if (copy_count > static_cast<int>(shm::MAX_PLAYERS)) copy_count = static_cast<int>(shm::MAX_PLAYERS);
             if (copy_count > 0) {
                 std::memcpy(out_packet.players, mapped_data->players, copy_count * sizeof(PlayerData));
             }
@@ -193,7 +207,7 @@ public:
                 continue;
             }
             
-            std::memcpy(out, mapped_data->view_matrix, sizeof(float) * 16);
+            std::memcpy(out, mapped_data->view_matrix, sizeof(float) * shm::VIEW_MATRIX_SIZE);
             
             uint32_t seq2 = mapped_data->frame_index;
             if (__builtin_expect(seq1 == seq2, 1)) {

@@ -1,5 +1,5 @@
 #pragma once
-#include <GLFW/glfw3.h>
+#include "renderer/gl_loader.hpp"
 #define GLFW_EXPOSE_NATIVE_X11
 #include <GLFW/glfw3native.h>
 #include <string>
@@ -39,6 +39,7 @@ private:
         float u, v;
     };
 
+    void init_text_rendering();
     void draw_string_batched(const std::string& str, float x, float y, float r, float g, float b, float scale);
 
     void init_window(int x, int y, bool hyprland_support);

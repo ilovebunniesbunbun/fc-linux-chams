@@ -53,12 +53,20 @@ static bool OpenMapVpk(vpk::VPKDir& out_vpk,
         if (!container_vpk.open(container_path)) continue;
 
         const std::string nested_vpk_path = "maps/" + mapName + ".vpk";
-        auto nested_vpk_bytes = container_vpk.read_file(nested_vpk_path);
-        if (!nested_vpk_bytes) continue;
+        if (container_vpk.has_file(nested_vpk_path)) {
+            auto nested_vpk_bytes = container_vpk.read_file(nested_vpk_path);
+            if (nested_vpk_bytes && out_vpk.open_from_bytes(*nested_vpk_bytes)) {
+                opened_path = container_path + ":" + nested_vpk_path;
+                return true;
+            }
+        }
 
-        if (out_vpk.open_from_bytes(*nested_vpk_bytes)) {
-            opened_path = container_path + ":" + nested_vpk_path;
-            return true;
+        const std::string physics_path = "maps/" + mapName + "/world_physics.vmdl_c";
+        if (container_vpk.has_file(physics_path)) {
+            if (out_vpk.open(container_path)) {
+                opened_path = container_path;
+                return true;
+            }
         }
     }
 
@@ -103,7 +111,8 @@ static bool KvToFloat3Array(const source2::kv3::KVValue* v,
 static bool AppendHullFromPhysData(const std::vector<Vec3>& verts,
                                      const std::vector<uint8_t>& faces,
                                      const std::vector<hedge_t>& edges,
-                                     std::vector<Triangle>& out) {
+                                     std::vector<Triangle>& out,
+                                     float type_id) {
     if (verts.size() < 3 || faces.empty() || edges.empty()) return false;
 
     const auto before = out.size();
@@ -133,9 +142,9 @@ static bool AppendHullFromPhysData(const std::vector<Vec3>& verts,
             if (static_cast<size_t>(i0) >= verts.size() ||
                 static_cast<size_t>(i1) >= verts.size() ||
                 static_cast<size_t>(i2) >= verts.size()) continue;
-            out.push_back({verts[static_cast<size_t>(i0)],
-                           verts[static_cast<size_t>(i1)],
-                           verts[static_cast<size_t>(i2)]});
+            out.push_back({{verts[static_cast<size_t>(i0)], type_id},
+                           {verts[static_cast<size_t>(i1)], type_id},
+                           {verts[static_cast<size_t>(i2)], type_id}});
         }
     }
     return out.size() > before;
@@ -143,7 +152,8 @@ static bool AppendHullFromPhysData(const std::vector<Vec3>& verts,
 
 static bool AppendMeshFromPhysData(const std::vector<Vec3>& verts,
                                      const std::vector<int32_t>& tris,
-                                     std::vector<Triangle>& out) {
+                                     std::vector<Triangle>& out,
+                                     float type_id) {
     if (verts.size() < 3 || tris.size() < 3 || (tris.size() % 3) != 0) return false;
 
     const auto before = out.size();
@@ -155,16 +165,17 @@ static bool AppendMeshFromPhysData(const std::vector<Vec3>& verts,
         if (static_cast<size_t>(i0) >= verts.size() ||
             static_cast<size_t>(i1) >= verts.size() ||
             static_cast<size_t>(i2) >= verts.size()) continue;
-        out.push_back({verts[static_cast<size_t>(i0)],
-                       verts[static_cast<size_t>(i1)],
-                       verts[static_cast<size_t>(i2)]});
+        out.push_back({{verts[static_cast<size_t>(i0)], type_id},
+                       {verts[static_cast<size_t>(i1)], type_id},
+                       {verts[static_cast<size_t>(i2)], type_id}});
     }
     return out.size() > before;
 }
 
 bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                               std::vector<Triangle>& out,
-                              std::vector<Triangle>& out_visual) {
+                              std::vector<Triangle>& out_visual,
+                              float type_id) {
     auto hdr_opt = source2::parse_res_header(vmdl_blob.data(), vmdl_blob.size());
     if (!hdr_opt) return false;
 
@@ -287,7 +298,7 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                                  edges_raw[ei * 4 + 2], edges_raw[ei * 4 + 3]};
 
                 std::vector<Triangle> temp_tris;
-                if (AppendHullFromPhysData(verts, faces_raw, edges, temp_tris)) {
+                if (AppendHullFromPhysData(verts, faces_raw, edges, temp_tris, type_id)) {
                     if (pass_physics) {
                         out.insert(out.end(), temp_tris.begin(), temp_tris.end());
                     }
@@ -318,17 +329,17 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                     verts)) continue;
 
                 std::vector<int32_t> tris_int32;
-                std::vector<uint8_t> tris;
-                if (!KvToBlobBytes(get_first(mesh, { "m_Triangles", "m_Triangles" }), tris) || (tris.size() % 12) != 0)
+                std::vector<uint8_t> tris_raw;
+                if (!KvToBlobBytes(get_first(mesh, { "m_Triangles", "m_Triangles" }), tris_raw) || (tris_raw.size() % 12) != 0)
                     continue;
 
-                tris_int32.reserve(tris.size() / 4);
-                for (size_t i = 0; i < tris.size(); i += 4) {
-                    tris_int32.push_back(source2::detail::rd<int32_t>(tris.data() + i));
+                tris_int32.reserve(tris_raw.size() / 4);
+                for (size_t i = 0; i < tris_raw.size(); i += 4) {
+                    tris_int32.push_back(source2::detail::rd<int32_t>(tris_raw.data() + i));
                 }
 
                 std::vector<Triangle> temp_tris;
-                if (!tris_int32.empty() && AppendMeshFromPhysData(verts, tris_int32, temp_tris)) {
+                if (!tris_int32.empty() && AppendMeshFromPhysData(verts, tris_int32, temp_tris, type_id)) {
                     if (pass_physics) {
                         out.insert(out.end(), temp_tris.begin(), temp_tris.end());
                     }
@@ -435,10 +446,17 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
 
         if (classname != "func_brush" && classname != "func_breakable" &&
             classname != "func_clip_vphysics" && classname != "func_physbox" &&
-            classname != "prop_dynamic" && classname != "prop_dynamic_override" &&
             classname != "prop_physics" && classname != "prop_physics_multiplayer") {
             continue;
         }
+
+        float type_id = 0.0f;
+        if (classname == "func_breakable") type_id = 1.0f;
+        else if (classname == "prop_physics" || classname == "prop_physics_multiplayer") type_id = 2.0f;
+        else if (classname == "func_brush") type_id = 3.0f;
+        else if (classname == "func_clip_vphysics") type_id = 4.0f;
+        else if (classname == "func_physbox") type_id = 5.0f;
+        else type_id = 6.0f;
 
         const auto* model_val = values->get("model");
         if (!model_val || !model_val->is_string()) continue;
@@ -461,7 +479,7 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
 
         std::vector<Triangle> local_phys;
         std::vector<Triangle> local_visual;
-        if (!AppendPhysBlockTriangles(*model_bytes, local_phys, local_visual)) continue;
+        if (!AppendPhysBlockTriangles(*model_bytes, local_phys, local_visual, type_id)) continue;
 
         Vec3 origin = ParseVec3(values->get("origin"), {0.f, 0.f, 0.f});
         Vec3 angles = ParseVec3(values->get("angles"), {0.f, 0.f, 0.f});
@@ -494,11 +512,44 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
         };
 
         auto TransformTriangle = [&](const Triangle& tri) -> Triangle {
-            return {TransformVec3(tri.v0), TransformVec3(tri.v1), TransformVec3(tri.v2)};
+            return {{TransformVec3(tri.v0.pos), tri.v0.type_id}, {TransformVec3(tri.v1.pos), tri.v1.type_id}, {TransformVec3(tri.v2.pos), tri.v2.type_id}};
         };
 
-        for (const auto& tri : local_phys) out.push_back(TransformTriangle(tri));
-        for (const auto& tri : local_visual) out_visual.push_back(TransformTriangle(tri));
+        bool add_to_geometry = true;
+        if (classname == "func_clip_vphysics" || classname == "func_physbox") {
+            add_to_geometry = false;
+        }
+        if (classname == "func_brush") {
+            const source2::kv3::KVValue* sd_val = nullptr;
+            for (const auto& [k, v] : values->as_object()) {
+                std::string k_lower = k;
+                std::transform(k_lower.begin(), k_lower.end(), k_lower.begin(), ::tolower);
+                if (k_lower == "startdisabled") {
+                    sd_val = &v;
+                    break;
+                }
+            }
+            if (sd_val) {
+                bool is_disabled = false;
+                if (sd_val->type == source2::kv3::KVType::Boolean_true) is_disabled = true;
+                else if (sd_val->type == source2::kv3::KVType::Int64 && sd_val->as_int() != 0) is_disabled = true;
+                else if (sd_val->type == source2::kv3::KVType::UInt64 && sd_val->as_int() != 0) is_disabled = true;
+                else if (sd_val->type == source2::kv3::KVType::Double && sd_val->as_float() != 0.0) is_disabled = true;
+                else if (sd_val->is_string()) {
+                    std::string s = sd_val->as_string();
+                    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+                    if (s == "1" || s == "true") is_disabled = true;
+                }
+                if (is_disabled) {
+                    add_to_geometry = false;
+                }
+            }
+        }
+
+        if (add_to_geometry) {
+            for (const auto& tri : local_phys) out.push_back(TransformTriangle(tri));
+            for (const auto& tri : local_visual) out_visual.push_back(TransformTriangle(tri));
+        }
     }
 }
 
@@ -622,8 +673,8 @@ std::vector<Vec2> ProjectTopDown(const MapMesh& mesh,
     static constexpr std::size_t k_max_segments = 200000;
     if (!mesh.Valid || mesh.Triangles.empty()) return {};
 
-    float min_x = mesh.Triangles[0].v0.x, max_x = min_x;
-    float min_y = mesh.Triangles[0].v0.y, max_y = min_y;
+    float min_x = mesh.Triangles[0].v0.pos.x, max_x = min_x;
+    float min_y = mesh.Triangles[0].v0.pos.y, max_y = min_y;
 
     auto update_bounds = [&](const Vec3& v) {
         if (!std::isfinite(v.x) || !std::isfinite(v.y)) return;
@@ -631,9 +682,9 @@ std::vector<Vec2> ProjectTopDown(const MapMesh& mesh,
         min_y = std::min(min_y, v.y); max_y = std::max(max_y, v.y);
     };
     for (const auto& tri : mesh.Triangles) {
-        update_bounds(tri.v0);
-        update_bounds(tri.v1);
-        update_bounds(tri.v2);
+        update_bounds(tri.v0.pos);
+        update_bounds(tri.v1.pos);
+        update_bounds(tri.v2.pos);
     }
 
     const float rx = max_x - min_x, ry = max_y - min_y;
@@ -651,12 +702,12 @@ std::vector<Vec2> ProjectTopDown(const MapMesh& mesh,
     for (const auto& tri : mesh.Triangles) {
         if (lines.size() / 2 >= k_max_segments) break;
 
-        if (!std::isfinite(tri.v0.x) || !std::isfinite(tri.v0.y) ||
-            !std::isfinite(tri.v1.x) || !std::isfinite(tri.v1.y) ||
-            !std::isfinite(tri.v2.x) || !std::isfinite(tri.v2.y))
+        if (!std::isfinite(tri.v0.pos.x) || !std::isfinite(tri.v0.pos.y) ||
+            !std::isfinite(tri.v1.pos.x) || !std::isfinite(tri.v1.pos.y) ||
+            !std::isfinite(tri.v2.pos.x) || !std::isfinite(tri.v2.pos.y))
             continue;
 
-        const Vec2 pa = proj(tri.v0), pb = proj(tri.v1), pc = proj(tri.v2);
+        const Vec2 pa = proj(tri.v0.pos), pb = proj(tri.v1.pos), pc = proj(tri.v2.pos);
 
         lines.push_back(pa); lines.push_back(pb);
         lines.push_back(pb); lines.push_back(pc);

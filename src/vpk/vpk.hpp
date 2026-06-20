@@ -155,6 +155,15 @@ public:
         return opened_;
     }
 
+    bool has_file(const std::string& full_path) const {
+        std::string key = full_path;
+        for (char& c : key) {
+            if (c == '\\') c = '/';
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        return entries_.find(key) != entries_.end();
+    }
+
     std::optional<std::vector<uint8_t>> read_file(const std::string& full_path) const {
         
         std::string key = full_path;
@@ -670,32 +679,35 @@ inline std::vector<std::string> find_workshop_map_vpks(const std::string& map_na
             std::string map_id = ffd.cFileName;
             const std::string map_id_dir = workshop_dir + "/" + map_id;
 
-            WIN32_FIND_DATAA ffd2;
-            HANDLE find_handle2 = FindFirstFileA((map_id_dir + "/maps/*").c_str(), &ffd2);
-            if (find_handle2 == INVALID_HANDLE_VALUE) continue;
+            const std::string search_dirs[] = { map_id_dir, map_id_dir + "/maps" };
+            for (const auto& s_dir : search_dirs) {
+                WIN32_FIND_DATAA ffd2;
+                HANDLE find_handle2 = FindFirstFileA((s_dir + "/*").c_str(), &ffd2);
+                if (find_handle2 == INVALID_HANDLE_VALUE) continue;
 
-            do {
-                if (ffd2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-                
-                std::string filename = ffd2.cFileName;
-                
-                if (filename.size() > 4) {
-                    std::string ext = filename.substr(filename.size() - 4);
-                    for (char& c : ext) c = tolower(c);
-                    if (ext == ".vpk") {
-                        std::string base = filename.substr(0, filename.size() - 4);
-                        for (char& c : base) c = tolower(c);
-                        
-                        std::string target = map_name;
-                        for (char& c : target) c = tolower(c);
-                        
-                        if (base == target) {
-                            paths.push_back(normalize_path(map_id_dir + "/maps/" + filename));
+                do {
+                    if (ffd2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    
+                    std::string filename = ffd2.cFileName;
+                    
+                    if (filename.size() > 4) {
+                        std::string ext = filename.substr(filename.size() - 4);
+                        for (char& c : ext) c = tolower(c);
+                        if (ext == ".vpk") {
+                            std::string base = filename.substr(0, filename.size() - 4);
+                            for (char& c : base) c = tolower(c);
+                            
+                            std::string target = map_name;
+                            for (char& c : target) c = tolower(c);
+                            
+                            if (base == target || target.empty()) {
+                                paths.push_back(normalize_path(s_dir + "/" + filename));
+                            }
                         }
                     }
-                }
-            } while (FindNextFileA(find_handle2, &ffd2));
-            FindClose(find_handle2);
+                } while (FindNextFileA(find_handle2, &ffd2));
+                FindClose(find_handle2);
+            }
 
         } while (FindNextFileA(find_handle, &ffd));
         FindClose(find_handle);
@@ -771,25 +783,29 @@ inline std::vector<std::string> find_workshop_map_vpks(const std::string& map_na
                 if (map_id[0] == '.') continue;
 
                 const std::string map_id_dir = workshop_dir + "/" + map_id;
-                const std::string maps_dir = map_id_dir + "/maps";
-                if (!std::filesystem::exists(maps_dir)) continue;
+                const std::string search_dirs[] = { map_id_dir, map_id_dir + "/maps" };
+                for (const auto& s_dir : search_dirs) {
+                    if (!std::filesystem::exists(s_dir)) continue;
 
-                for (const auto& file_entry : std::filesystem::directory_iterator(maps_dir)) {
-                    if (file_entry.is_directory()) continue;
-                    std::string filename = file_entry.path().filename().string();
-                    if (filename.size() > 4) {
-                        std::string ext = filename.substr(filename.size() - 4);
-                        for (char& c : ext) c = std::tolower(c);
-                        if (ext == ".vpk") {
-                            std::string base = filename.substr(0, filename.size() - 4);
-                            for (char& c : base) c = std::tolower(c);
-                            std::string target = map_name;
-                            for (char& c : target) c = std::tolower(c);
-                            if (base == target || target.empty()) {
-                                paths.push_back(normalize_path(map_id_dir + "/maps/" + filename));
+                    try {
+                        for (const auto& file_entry : std::filesystem::directory_iterator(s_dir)) {
+                            if (file_entry.is_directory()) continue;
+                            std::string filename = file_entry.path().filename().string();
+                            if (filename.size() > 4) {
+                                std::string ext = filename.substr(filename.size() - 4);
+                                for (char& c : ext) c = std::tolower(c);
+                                if (ext == ".vpk") {
+                                    std::string base = filename.substr(0, filename.size() - 4);
+                                    for (char& c : base) c = std::tolower(c);
+                                    std::string target = map_name;
+                                    for (char& c : target) c = std::tolower(c);
+                                    if (base == target || target.empty()) {
+                                        paths.push_back(normalize_path(s_dir + "/" + filename));
+                                    }
+                                }
                             }
                         }
-                    }
+                    } catch (...) {}
                 }
             }
         } catch (...) {}

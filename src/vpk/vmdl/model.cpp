@@ -139,8 +139,11 @@ static bool BuildMesh(const source2::ModelData& Md, AgentMesh& Out, bool Include
             Out.inv_bind_poses[I] = Md.inv_bind_poses[I];
         } else {
             auto& M = Out.inv_bind_poses[I];
-            M = {};
-            M.mat[0][0] = M.mat[1][1] = M.mat[2][2] = 1.0f;
+            M = source2::Mat3x4(
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f
+            );
         }
     }
 

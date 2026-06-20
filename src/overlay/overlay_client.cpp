@@ -2,11 +2,13 @@
 #include "renderer/gl_loader.hpp"
 #include <X11/Xlib.h>
 #include <X11/extensions/shape.h>
-#include <iostream>
+#include "logger.hpp"
 #include <cstring>
 #include <cstdlib>
 #include <array>
 #include <chrono>
+
+#include <vector>
 
 // Font bitmap for rendering FPS counter
 static unsigned char font_8x8[256][8];
@@ -68,8 +70,116 @@ static void init_font() {
     font_initialized = true;
 }
 
+void OverlayClient::init_text_rendering() {
+    if (!font_initialized) init_font();
+
+    std::vector<unsigned char> tex_data(128 * 128 * 4, 0);
+    for (int c = 0; c < 256; ++c) {
+        const unsigned char* bitmap = font_8x8[c];
+        int char_row = c / 16;
+        int char_col = c % 16;
+        for (int row = 0; row < 8; ++row) {
+            unsigned char row_val = bitmap[row];
+            for (int col = 0; col < 8; ++col) {
+                int px = char_col * 8 + col;
+                int py = char_row * 8 + row;
+                int idx = (py * 128 + px) * 4;
+                if (row_val & (0x80 >> col)) {
+                    tex_data[idx + 0] = 255;
+                    tex_data[idx + 1] = 255;
+                    tex_data[idx + 2] = 255;
+                    tex_data[idx + 3] = 255;
+                } else {
+                    tex_data[idx + 0] = 255;
+                    tex_data[idx + 1] = 255;
+                    tex_data[idx + 2] = 255;
+                    tex_data[idx + 3] = 0;
+                }
+            }
+        }
+    }
+
+    glGenTextures(1, &font_texture);
+    glBindTexture(GL_TEXTURE_2D, font_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, tex_data.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // Compile text shaders
+    const char* text_vertex_src = R"glsl(
+        #version 330 core
+        layout(location = 0) in vec2 aPos;
+        layout(location = 1) in vec2 aTex;
+        out vec2 vTex;
+        uniform mat4 uProj;
+        void main() {
+            gl_Position = uProj * vec4(aPos, 0.0, 1.0);
+            vTex = aTex;
+        }
+    )glsl";
+
+    const char* text_fragment_src = R"glsl(
+        #version 330 core
+        in vec2 vTex;
+        out vec4 fragColor;
+        uniform sampler2D uTexture;
+        uniform vec4 uColor;
+        void main() {
+            vec4 texColor = texture(uTexture, vTex);
+            fragColor = texColor * uColor;
+        }
+    )glsl";
+
+    auto compile = [](unsigned int type, const char* src) -> unsigned int {
+        unsigned int s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        int success;
+        glGetShaderiv(s, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            char log[512];
+            glGetShaderInfoLog(s, 512, nullptr, log);
+            FC2_LOG_ERROR("TEXT SHADER COMPILATION ERROR: {}", log);
+        }
+        return s;
+    };
+
+    unsigned int vs = compile(GL_VERTEX_SHADER, text_vertex_src);
+    unsigned int fs = compile(GL_FRAGMENT_SHADER, text_fragment_src);
+    text_program_id = glCreateProgram();
+    glAttachShader(text_program_id, vs);
+    glAttachShader(text_program_id, fs);
+    glLinkProgram(text_program_id);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    text_loc_proj = glGetUniformLocation(text_program_id, "uProj");
+    text_loc_color = glGetUniformLocation(text_program_id, "uColor");
+
+    glGenVertexArrays(1, &text_vao);
+    glGenBuffers(1, &text_vbo);
+
+    glBindVertexArray(text_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, text_vbo);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)(2 * sizeof(float)));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 void OverlayClient::draw_string_batched(const std::string& str, float x, float y, float r, float g, float b, float scale) {
     if (str.empty()) return;
+
+    if (text_program_id == 0) {
+        init_text_rendering();
+    }
 
     std::vector<TextVertex> vertices;
     vertices.reserve(str.size() * 6);
@@ -149,12 +259,12 @@ void OverlayClient::poll_events() {
 void OverlayClient::set_click_through(bool enabled) {
     Display* display = glfwGetX11Display();
     if (!display) {
-        std::cerr << "OVERLAY_CLIENT: Failed to get X11 display for click-through." << std::endl;
+        FC2_LOG_ERROR("Failed to get X11 display for click-through.");
         return;
     }
     Window x_win = glfwGetX11Window(window);
     if (!x_win) {
-        std::cerr << "OVERLAY_CLIENT: Failed to get X11 window." << std::endl;
+        FC2_LOG_ERROR("Failed to get X11 window.");
         return;
     }
     if (enabled) {
@@ -194,28 +304,24 @@ void OverlayClient::init_window(int x, int y, bool hyprland_support) {
     Display* display = glfwGetX11Display();
     Window x_win = glfwGetX11Window(window);
     if (hyprland_support) {
-        std::cout << "OVERLAY_CLIENT: Hyprland compatibility mode enabled; skipping override_redirect "
-                     "(relying on input region + windowrules for click-through)." << std::endl;
+        FC2_LOG_INFO("Hyprland compatibility mode enabled; skipping override_redirect "
+                     "(relying on input region + windowrules for click-through).");
     } else if (display && x_win) {
         glfwHideWindow(window);
         XSetWindowAttributes attrs;
         attrs.override_redirect = True;
         XChangeWindowAttributes(display, x_win, CWOverrideRedirect, &attrs);
         glfwShowWindow(window);
-        std::cout << "OVERLAY_CLIENT: X11 override_redirect applied successfully." << std::endl;
+        FC2_LOG_INFO("X11 override_redirect applied successfully.");
     } else {
-        std::cerr << "OVERLAY_CLIENT: Failed to apply override_redirect." << std::endl;
+        FC2_LOG_ERROR("Failed to apply override_redirect.");
     }
 }
 
 void OverlayClient::init_opengl() {
     glfwMakeContextCurrent(window);
     
-    // Initialize dynamic OpenGL function pointers
-    if (!load_gl_functions()) {
-        throw std::runtime_error("OVERLAY_CLIENT: Failed to load modern OpenGL functions. Ensure OpenGL 3.3 support.");
-    }
-
+    // OpenGL function loading handled by GLEW in main
     glfwSwapInterval(0); // Disable V-Sync for custom frame pacing
 
     glViewport(0, 0, width, height);
@@ -226,108 +332,6 @@ void OverlayClient::init_opengl() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Initialize Font Texture Atlas
-    if (!font_initialized) init_font();
-
-    std::vector<unsigned char> tex_data(128 * 128 * 4, 0);
-    for (int c = 0; c < 256; ++c) {
-        const unsigned char* bitmap = font_8x8[c];
-        int char_row = c / 16;
-        int char_col = c % 16;
-        for (int row = 0; row < 8; ++row) {
-            unsigned char row_val = bitmap[row];
-            for (int col = 0; col < 8; ++col) {
-                int px = char_col * 8 + col;
-                int py = char_row * 8 + row;
-                int idx = (py * 128 + px) * 4;
-                if (row_val & (0x80 >> col)) {
-                    tex_data[idx + 0] = 255;
-                    tex_data[idx + 1] = 255;
-                    tex_data[idx + 2] = 255;
-                    tex_data[idx + 3] = 255;
-                } else {
-                    tex_data[idx + 0] = 255;
-                    tex_data[idx + 1] = 255;
-                    tex_data[idx + 2] = 255;
-                    tex_data[idx + 3] = 0;
-                }
-            }
-        }
-    }
-
-    glGenTextures(1, &font_texture);
-    glBindTexture(GL_TEXTURE_2D, font_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, tex_data.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    // Compile text shaders
-    const char* text_vertex_src = R"glsl(
-        #version 330 core
-        layout(location = 0) in vec2 aPos;
-        layout(location = 1) in vec2 aTex;
-        out vec2 vTex;
-        uniform mat4 uProj;
-        void main() {
-            gl_Position = uProj * vec4(aPos, 0.0, 1.0);
-            vTex = aTex;
-        }
-    )glsl";
-
-    const char* text_fragment_src = R"glsl(
-        #version 330 core
-        in vec2 vTex;
-        out vec4 fragColor;
-        uniform sampler2D uTexture;
-        uniform vec4 uColor;
-        void main() {
-            vec4 texColor = texture(uTexture, vTex);
-            fragColor = texColor * uColor;
-        }
-    )glsl";
-
-    auto compile = [](unsigned int type, const char* src) -> unsigned int {
-        unsigned int s = glCreateShader(type);
-        glShaderSource(s, 1, &src, nullptr);
-        glCompileShader(s);
-        int success;
-        glGetShaderiv(s, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            char log[512];
-            glGetShaderInfoLog(s, 512, nullptr, log);
-            std::cerr << "TEXT SHADER COMPILATION ERROR: " << log << std::endl;
-        }
-        return s;
-    };
-
-    unsigned int vs = compile(GL_VERTEX_SHADER, text_vertex_src);
-    unsigned int fs = compile(GL_FRAGMENT_SHADER, text_fragment_src);
-    text_program_id = glCreateProgram();
-    glAttachShader(text_program_id, vs);
-    glAttachShader(text_program_id, fs);
-    glLinkProgram(text_program_id);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    text_loc_proj = glGetUniformLocation(text_program_id, "uProj");
-    text_loc_color = glGetUniformLocation(text_program_id, "uColor");
-
-    glGenVertexArrays(1, &text_vao);
-    glGenBuffers(1, &text_vbo);
-
-    glBindVertexArray(text_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, text_vbo);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)(2 * sizeof(float)));
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void OverlayClient::begin_frame() {
@@ -354,13 +358,13 @@ void OverlayClient::draw_fps(int fps) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     std::string fps_text = "FPS: " + std::to_string(fps);
-    float text_width = fps_text.size() * (8.0f * 2.0f + 2.0f);
+    float text_width = fps_text.size() * 18.0f;
     float x_pos = width - text_width - 20.0f;
     float y_pos = 20.0f;
 
     // Draw shadow
     draw_string_batched(fps_text, x_pos + 1.0f, y_pos + 1.0f, 0.0f, 0.0f, 0.0f, 2.0f);
-    // Draw text
+    // Draw text (bright green)
     draw_string_batched(fps_text, x_pos, y_pos, 0.0f, 1.0f, 0.0f, 2.0f);
 
     glEnable(GL_DEPTH_TEST);

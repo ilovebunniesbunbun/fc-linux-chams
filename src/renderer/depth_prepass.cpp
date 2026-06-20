@@ -1,12 +1,15 @@
 #include "depth_prepass.hpp"
 #include "gl_loader.hpp"
-#include <iostream>
+#include "logger.hpp"
 
 static const char* depth_vertex_shader = R"glsl(
 #version 330 core
 layout(location = 0) in vec3 aPos;
+layout(location = 1) in float aTypeID;
 uniform mat4 uViewProj;
+out float vTypeID;
 void main() {
+    vTypeID = aTypeID;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 }
 )glsl";
@@ -22,8 +25,21 @@ static const char* wireframe_fragment_shader_src = R"glsl(
 #version 330 core
 out vec4 FragColor;
 uniform vec4 uColor;
+in float vTypeID;
 void main() {
-    FragColor = uColor;
+    vec4 finalColor = uColor;
+    if (vTypeID > 0.5 && vTypeID < 1.5) {
+        finalColor = vec4(1.0, 0.0, 0.0, uColor.a); // Breakables (Red)
+    } else if (vTypeID > 1.5 && vTypeID < 2.5) {
+        finalColor = vec4(0.0, 1.0, 0.0, uColor.a); // Physics props (Green)
+    } else if (vTypeID > 2.5 && vTypeID < 3.5) {
+        finalColor = vec4(0.0, 0.0, 1.0, uColor.a); // Func Brush (Blue)
+    } else if (vTypeID > 3.5 && vTypeID < 4.5) {
+        finalColor = vec4(1.0, 0.0, 1.0, uColor.a); // Func Clip VPhysics (Magenta)
+    } else if (vTypeID > 4.5 && vTypeID < 5.5) {
+        finalColor = vec4(0.0, 1.0, 1.0, uColor.a); // Func Physbox (Cyan)
+    }
+    FragColor = finalColor;
 }
 )glsl";
 
@@ -76,7 +92,7 @@ bool DepthPrepassRenderer::compile_shader(unsigned int shader, const char* sourc
     if (!success) {
         char info_log[512];
         glGetShaderInfoLog(shader, 512, nullptr, info_log);
-        std::cerr << "DEPTH_PREPASS: Shader compilation error: " << info_log << std::endl;
+        FC2_LOG_ERROR("DEPTH_PREPASS: Shader compilation error: {}", info_log);
         return false;
     }
     return true;
@@ -93,7 +109,7 @@ bool DepthPrepassRenderer::link_program() {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(program_id, 512, nullptr, info_log);
-        std::cerr << "DEPTH_PREPASS: Shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("DEPTH_PREPASS: Shader linking error: {}", info_log);
         return false;
     }
     return true;
@@ -110,7 +126,7 @@ bool DepthPrepassRenderer::link_wireframe_program() {
     if (!success) {
         char info_log[512];
         glGetProgramInfoLog(wireframe_program_id, 512, nullptr, info_log);
-        std::cerr << "MAP_VISUALIZER: Shader linking error: " << info_log << std::endl;
+        FC2_LOG_ERROR("MAP_VISUALIZER: Shader linking error: {}", info_log);
         return false;
     }
     return true;
@@ -151,11 +167,14 @@ void DepthPrepassRenderer::upload_geometry(const std::vector<MapParser::Triangle
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     
-    // Upload raw Triangle structures directly
+    // Upload raw Vertex structures directly (a Triangle is 3 Vertices)
     glBufferData(GL_ARRAY_BUFFER, triangles.size() * sizeof(MapParser::Triangle), triangles.data(), GL_STATIC_DRAW);
 
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MapParser::Vec3), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MapParser::Vertex), (void*)offsetof(MapParser::Vertex, pos));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(MapParser::Vertex), (void*)offsetof(MapParser::Vertex, type_id));
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);

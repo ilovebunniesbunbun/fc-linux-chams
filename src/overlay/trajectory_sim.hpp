@@ -2,29 +2,31 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include "../shm_reader.hpp"
-#include "bvh_parser.hpp"
+#include "overlay/shm_reader.hpp"
+#include "overlay/bvh_parser.hpp"
+#include <glm/glm.hpp>
+#include <glm/gtx/norm.hpp>
 
 struct TrajectoryResult {
-    std::vector<Vec3> points;
-    std::vector<Vec3> bounces;
+    std::vector<glm::vec3> points;
+    std::vector<glm::vec3> bounces;
     std::vector<size_t> bounce_indices;
-    Vec3 end_pos{0,0,0};
+    glm::vec3 end_pos{0.0f, 0.0f, 0.0f};
     float duration = 0.0f;
     bool valid = false;
 
     // For real-time tracking and fading animations
     bool has_current_pos = false;
-    Vec3 current_pos{0,0,0};
+    glm::vec3 current_pos{0.0f, 0.0f, 0.0f};
     uint32_t entity_handle = 0;
     float spawn_time = 0.0f;
 };
 
 // Check if grenade should detonate based on weapon type, velocity, and current tick
-inline bool should_detonate(uint8_t weapon_type, const Vec3& vel, int tick) {
+inline bool should_detonate(uint8_t weapon_type, const glm::vec3& vel, int tick) {
     constexpr float tick_interval = 1.0f / 64.0f;
     if (weapon_type == GRENADE_SMOKE || weapon_type == GRENADE_DECOY) {
-        float speed_2d = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+        float speed_2d = glm::length(glm::vec2(vel));
         float threshold = (weapon_type == GRENADE_DECOY) ? 0.2f : 0.1f;
         int check_ticks = static_cast<int>(0.2f / tick_interval);
         if (check_ticks < 1) check_ticks = 1;
@@ -39,46 +41,38 @@ inline bool should_detonate(uint8_t weapon_type, const Vec3& vel, int tick) {
     return false;
 }
 
-inline Vec3 resolve_collision(const Vec3& normal, const Vec3& vel) {
+inline glm::vec3 resolve_collision(const glm::vec3& normal, const glm::vec3& vel) {
     constexpr float ELASTICITY = 0.45f;
-    float backoff = (vel.x * normal.x + vel.y * normal.y + vel.z * normal.z) * 2.0f;
+    float backoff = glm::dot(vel, normal) * 2.0f;
 
-    Vec3 new_vel = {
-        (vel.x - normal.x * backoff) * ELASTICITY,
-        (vel.y - normal.y * backoff) * ELASTICITY,
-        (vel.z - normal.z * backoff) * ELASTICITY
-    };
+    glm::vec3 new_vel = (vel - normal * backoff) * ELASTICITY;
 
-    float speed_sqr = new_vel.x*new_vel.x + new_vel.y*new_vel.y + new_vel.z*new_vel.z;
+    float speed_sqr = glm::dot(new_vel, new_vel);
     if (normal.z > 0.7f) {
         if (speed_sqr > 96000.0f) {
             float len = std::sqrt(speed_sqr);
-            float nv_x = new_vel.x / len, nv_y = new_vel.y / len, nv_z = new_vel.z / len;
-            float l = nv_x * normal.x + nv_y * normal.y + nv_z * normal.z;
+            glm::vec3 nv = new_vel / len;
+            float l = glm::dot(nv, normal);
             if (l > 0.5f) {
                 float scale = 1.5f - l;
-                new_vel.x *= scale; new_vel.y *= scale; new_vel.z *= scale;
+                new_vel *= scale;
             }
         }
         if (speed_sqr < 400.0f) {
-            return {0, 0, 0};
+            return glm::vec3(0.0f);
         }
     }
     return new_vel;
 }
 
-inline void step_simulation(Vec3& pos, Vec3& vel, float gravity, const LocalMapBVH& bvh, bool& hit, Vec3& hit_normal) {
+inline void step_simulation(glm::vec3& pos, glm::vec3& vel, float gravity, const LocalMapBVH& bvh, bool& hit, glm::vec3& hit_normal) {
     constexpr float tick_interval = 1.0f / 64.0f;
     float new_vel_z = vel.z - gravity * tick_interval;
 
-    Vec3 move = {
-        vel.x * tick_interval,
-        vel.y * tick_interval,
-        (vel.z + new_vel_z) * 0.5f * tick_interval
-    };
+    glm::vec3 move = glm::vec3(glm::vec2(vel), (vel.z + new_vel_z) * 0.5f) * tick_interval;
 
-    Vec3 end_pos = { pos.x + move.x, pos.y + move.y, pos.z + move.z };
-    Vec3 new_vel = { vel.x, vel.y, new_vel_z };
+    glm::vec3 end_pos = pos + move;
+    glm::vec3 new_vel = glm::vec3(glm::vec2(vel), new_vel_z);
 
     hit = false;
     TraceResult result = bvh.trace_ray(pos, end_pos);
@@ -86,7 +80,7 @@ inline void step_simulation(Vec3& pos, Vec3& vel, float gravity, const LocalMapB
         hit = true;
         hit_normal = result.normal;
         // Slide slightly off normal to prevent getting stuck in walls
-        end_pos = { result.end_pos.x + result.normal.x * 0.1f, result.end_pos.y + result.normal.y * 0.1f, result.end_pos.z + result.normal.z * 0.1f };
+        end_pos = result.end_pos + result.normal * 0.1f;
         new_vel = resolve_collision(hit_normal, new_vel);
     }
 
@@ -94,7 +88,7 @@ inline void step_simulation(Vec3& pos, Vec3& vel, float gravity, const LocalMapB
     vel = new_vel;
 }
 
-inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velocity, uint8_t weapon_type, const LocalMapBVH& bvh) {
+inline TrajectoryResult simulate_trajectory(const glm::vec3& origin, const glm::vec3& velocity, uint8_t weapon_type, const LocalMapBVH& bvh) {
     constexpr float tick_interval = 1.0f / 64.0f;
     constexpr float GRAVITY_SCALE = 0.4f;
     constexpr float sv_gravity = 800.0f;
@@ -104,8 +98,8 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
     float molotov_max_slope_z = std::cos(55.0f * 3.14159265f / 180.0f);
 
     TrajectoryResult result;
-    Vec3 pos = origin;
-    Vec3 vel = velocity;
+    glm::vec3 pos = origin;
+    glm::vec3 vel = velocity;
     int bounce_count = 0;
     int tick_timer = 0;
     
@@ -134,7 +128,7 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
             }
         }
 
-        bool vel_stopped = std::abs(vel.x) < 20.0f && std::abs(vel.y) < 20.0f && (vel.x*vel.x + vel.y*vel.y + vel.z*vel.z) < 400.0f;
+        bool vel_stopped = std::abs(vel.x) < 20.0f && std::abs(vel.y) < 20.0f && glm::dot(vel, vel) < 400.0f;
 
         if (should_detonate(weapon_type, vel, tick) || bounce_count > 20 || vel_stopped) {
             result.end_pos = pos;
@@ -152,10 +146,7 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
 
     if (!result.points.empty() && result.valid) {
         const auto& last = result.points.back();
-        float dx = last.x - result.end_pos.x;
-        float dy = last.y - result.end_pos.y;
-        float dz = last.z - result.end_pos.z;
-        if ((dx*dx + dy*dy + dz*dz) > 1.0f) {
+        if (glm::distance2(last, result.end_pos) > 1.0f) {
             result.points.push_back(result.end_pos);
         }
     }
@@ -164,10 +155,7 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
         size_t closest_pt_idx = 0;
         float min_d = 1e9f;
         for (size_t idx = 0; idx < result.points.size(); ++idx) {
-            float dx = result.points[idx].x - bounce.x;
-            float dy = result.points[idx].y - bounce.y;
-            float dz = result.points[idx].z - bounce.z;
-            float d = dx*dx + dy*dy + dz*dz;
+            float d = glm::distance2(result.points[idx], bounce);
             if (d < min_d) {
                 min_d = d;
                 closest_pt_idx = idx;
@@ -180,14 +168,12 @@ inline TrajectoryResult simulate_trajectory(const Vec3& origin, const Vec3& velo
 }
 
 // Extract forward vector from View-Projection Matrix (Row-Major)
-inline Vec3 extract_forward_vector(const float* vp) {
+inline glm::vec3 extract_forward_vector(const float* vp) {
     // Row 2 contains depth information (viewing direction vector)
-    float x = -vp[8];
-    float y = -vp[9];
-    float z = -vp[10];
-    float len = std::sqrt(x*x + y*y + z*z);
+    glm::vec3 dir(-vp[8], -vp[9], -vp[10]);
+    float len = glm::length(dir);
     if (len > 1e-5f) {
-        return { x / len, y / len, z / len };
+        return dir / len;
     }
-    return { 0.0f, 0.0f, -1.0f };
+    return glm::vec3(0.0f, 0.0f, -1.0f);
 }

@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FC2 Chams Overlay Configuration",
+  "type": "object",
+  "properties": {
+    "monitor_w": { "type": "integer", "default": 2560 },
+    "monitor_h": { "type": "integer", "default": 1440 },
+    "game_w": { "type": "integer", "default": 1280 },
+    "game_h": { "type": "integer", "default": 960 },
+    "scaling": { "type": "string", "enum": ["stretched", "centered", "custom"], "default": "stretched" },
+    "game_x": { "type": "integer", "default": 0 },
+    "game_y": { "type": "integer", "default": 0 },
+    "fps": { "type": "integer", "default": 143 },
+    "show_fps": { "type": "boolean", "default": true },
+    "vsync": { "type": "boolean", "default": false },
+    "extrapolate": { "type": "boolean", "default": false },
+    "show_invisible": { "type": "boolean", "default": true },
+    "maps_dir": { "type": "string", "default": "./maps" },
+    "hyprland_support": { "type": "boolean", "default": false },
+    "monitor_index": { "type": "integer", "default": 0 },
+    "gpu_preference": { "type": "string", "default": "default" },
+    "vpk_path": { "type": "string", "default": "auto" },
+    "chams_style_visible": { "type": "string", "default": "flat" },
+    "chams_style_hidden": { "type": "string", "default": "flat" },
+    "use_depth_prepass": { "type": "boolean", "default": true },
+    "use_bvh_fallback": { "type": "boolean", "default": true },
+    "flat_chams_no_overlap": { "type": "boolean", "default": true },
+    "glow_enabled": { "type": "boolean", "default": false },
+    "outline_mode": { "type": "string", "enum": ["glow", "stencil"], "default": "glow" },
+    "menu_w": { "type": "integer", "default": 820 },
+    "menu_h": { "type": "integer", "default": 620 }
+  }
+}

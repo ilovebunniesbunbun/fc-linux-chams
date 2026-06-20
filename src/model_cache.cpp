@@ -1,6 +1,6 @@
 #include "model_cache.hpp"
 #include "renderer/gl_loader.hpp"
-#include <iostream>
+#include "logger.hpp"
 #include <algorithm>
 
 // Model path key resolution matching the original overlay logic
@@ -136,7 +136,7 @@ const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
     }
 
     // Load from VPK since it's not cached
-    std::cout << "MODEL_CACHE: Loading model: " << clean_name << " (resolved key: " << key << ", include_defuser: " << include_defuser << ")" << std::endl;
+    FC2_LOG_INFO("Loading model: {} (resolved key: {}, include_defuser: {})", clean_name, key, include_defuser);
     
     AgentParser::AgentMesh mesh;
     bool success = AgentParser::LoadModel(clean_name, mesh, include_defuser);
@@ -148,7 +148,7 @@ const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
         base_name.resize(variant_pos);
         base_name += ".vmdl";
         
-        std::cout << "MODEL_CACHE: Variant load failed, trying base: " << base_name << std::endl;
+        FC2_LOG_INFO("Variant load failed, trying base: {}", base_name);
         success = AgentParser::LoadModel(base_name, mesh, include_defuser);
     }
 
@@ -195,9 +195,9 @@ const CachedModel* ModelCache::get_or_load(const std::string& model_name) {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
         entry.valid = true;
-        std::cout << "MODEL_CACHE: Loaded model successfully. Vertices: " << entry.mesh.vertices.size() << " Indices: " << entry.index_count << std::endl;
+        FC2_LOG_INFO("MODEL_CACHE: Loaded model successfully. Vertices: {} Indices: {}", entry.mesh.vertices.size(), entry.index_count);
     } else {
-        std::cout << "MODEL_CACHE: Failed to load model: " << model_name << std::endl;
+        FC2_LOG_WARN("MODEL_CACHE: Failed to load model: {}", model_name);
         entry.valid = false;
     }
 
