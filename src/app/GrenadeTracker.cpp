@@ -46,11 +46,13 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
             if (warn.entity_handle == active_traj.entity_handle) {
                 warn.position = active_traj.current_pos;
                 if (warn.affected_count != active_traj.affected_count) {
-                    FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge Affected Count UPDATED. "
-                                 "Handle: {} (0x{:08X}), Type: {} ({}), Old Count: {}, New Count: {}",
-                                 warn.entity_handle, warn.entity_handle,
-                                 warn.type, get_grenade_name(warn.type),
-                                 warn.affected_count, active_traj.affected_count);
+                    if (cfg.debug_visibility) {
+                        FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge Affected Count UPDATED. "
+                                     "Handle: {} (0x{:08X}), Type: {} ({}), Old Count: {}, New Count: {}",
+                                     warn.entity_handle, warn.entity_handle,
+                                     warn.type, get_grenade_name(warn.type),
+                                     warn.affected_count, active_traj.affected_count);
+                    }
                 }
                 warn.affected_count = active_traj.affected_count;
                 warn.still_active = true;
@@ -60,13 +62,15 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
                 if (active_traj.timer_start_time > 0.0f && warn.timer_trigger_real_time == 0.0) {
                     warn.timer_trigger_real_time = current_real_time;
                     warn.timer_duration = active_traj.timer_duration;
-                    FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Timer STARTED/UPDATED. "
-                                 "Reason: Server/Lua timer trigger received. "
-                                 "Handle: {} (0x{:08X}), Type: {} ({}), Duration: {:.2f}s, Position: ({:.2f}, {:.2f}, {:.2f})",
-                                 warn.entity_handle, warn.entity_handle,
-                                 warn.type, get_grenade_name(warn.type),
-                                 warn.timer_duration,
-                                 warn.position.x, warn.position.y, warn.position.z);
+                    if (cfg.debug_visibility) {
+                        FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Timer STARTED/UPDATED. "
+                                     "Reason: Server/Lua timer trigger received. "
+                                     "Handle: {} (0x{:08X}), Type: {} ({}), Duration: {:.2f}s, Position: ({:.2f}, {:.2f}, {:.2f})",
+                                     warn.entity_handle, warn.entity_handle,
+                                     warn.type, get_grenade_name(warn.type),
+                                     warn.timer_duration,
+                                     warn.position.x, warn.position.y, warn.position.z);
+                    }
                 }
                 break;
             }
@@ -95,16 +99,18 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
                 new_warn.affected_count = active_traj.affected_count;
                 new_warn.still_active = true;
                 tracked_warnings.push_back(new_warn);
-                FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge went VISIBLE. "
-                             "Reason: New projectile warning created. "
-                             "Handle: {} (0x{:08X}), Type: {} ({}), Position: ({:.2f}, {:.2f}, {:.2f}), "
-                             "Timer Duration: {:.2f}s, Timer Triggered: {}, Affected Enemies: {}",
-                             new_warn.entity_handle, new_warn.entity_handle,
-                             new_warn.type, get_grenade_name(new_warn.type),
-                             new_warn.position.x, new_warn.position.y, new_warn.position.z,
-                             new_warn.timer_duration,
-                             (new_warn.timer_trigger_real_time > 0.0) ? "YES" : "NO",
-                             new_warn.affected_count);
+                if (cfg.debug_visibility) {
+                    FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge went VISIBLE. "
+                                 "Reason: New projectile warning created. "
+                                 "Handle: {} (0x{:08X}), Type: {} ({}), Position: ({:.2f}, {:.2f}, {:.2f}), "
+                                 "Timer Duration: {:.2f}s, Timer Triggered: {}, Affected Enemies: {}",
+                                 new_warn.entity_handle, new_warn.entity_handle,
+                                 new_warn.type, get_grenade_name(new_warn.type),
+                                 new_warn.position.x, new_warn.position.y, new_warn.position.z,
+                                 new_warn.timer_duration,
+                                 (new_warn.timer_trigger_real_time > 0.0) ? "YES" : "NO",
+                                 new_warn.affected_count);
+                }
             }
         }
 
@@ -151,15 +157,17 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
             new_track.uploaded = false;
 
             tracked_active_trajectories.push_back(new_track);
-            FC2_LOG_INFO("[DEBUG-VISIBILITY] In-Flight Grenade Trajectory went VISIBLE. "
-                         "Reason: New projectile trajectory tracked. "
-                         "Handle: {} (0x{:08X}), Type: {} ({}), Spawn Time: {:.3f}, Duration: {:.2f}s, "
-                         "Start/Curr Pos: ({:.2f}, {:.2f}, {:.2f}), Points count: {}",
-                         new_track.entity_handle, new_track.entity_handle,
-                         active_traj.type, get_grenade_name(active_traj.type),
-                         active_traj.spawn_time, active_traj.duration,
-                         active_traj.current_pos.x, active_traj.current_pos.y, active_traj.current_pos.z,
-                         active_traj.points.size());
+            if (cfg.debug_visibility) {
+                FC2_LOG_INFO("[DEBUG-VISIBILITY] In-Flight Grenade Trajectory went VISIBLE. "
+                             "Reason: New projectile trajectory tracked. "
+                             "Handle: {} (0x{:08X}), Type: {} ({}), Spawn Time: {:.3f}, Duration: {:.2f}s, "
+                             "Start/Curr Pos: ({:.2f}, {:.2f}, {:.2f}), Points count: {}",
+                             new_track.entity_handle, new_track.entity_handle,
+                             active_traj.type, get_grenade_name(active_traj.type),
+                             active_traj.spawn_time, active_traj.duration,
+                             active_traj.current_pos.x, active_traj.current_pos.y, active_traj.current_pos.z,
+                             active_traj.points.size());
+            }
         }
     }
 
@@ -208,11 +216,13 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
             new_inf.still_active = true;
             new_inf.last_seen_time = current_real_time;
             tracked_infernos.push_back(new_inf);
-            FC2_LOG_INFO("[DEBUG-VISIBILITY] Ground Fire Inferno went VISIBLE. "
-                         "Reason: Ground fire (C_Inferno) spawned/detected. "
-                         "Handle: {} (0x{:08X}), Duration: {:.2f}s, Flames count: {}",
-                         new_inf.entity_handle, new_inf.entity_handle,
-                         new_inf.duration, inf_data.fire_count);
+            if (cfg.debug_visibility) {
+                FC2_LOG_INFO("[DEBUG-VISIBILITY] Ground Fire Inferno went VISIBLE. "
+                             "Reason: Ground fire (C_Inferno) spawned/detected. "
+                             "Handle: {} (0x{:08X}), Duration: {:.2f}s, Flames count: {}",
+                             new_inf.entity_handle, new_inf.entity_handle,
+                             new_inf.duration, inf_data.fire_count);
+            }
         }
     }
 

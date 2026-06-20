@@ -202,6 +202,8 @@ void from_json(const nlohmann::json& j, ChamsStyle& style);
     X(int, esp_box_mode, "esp_box_mode", 1)                                                                   \
     X(float, esp_box_static_w, "esp_box_static_w", 41500.0f)                                                  \
     X(float, esp_box_static_h, "esp_box_static_h", 76200.0f)                                                  \
+    X(bool, esp_box_hp_visible, "esp_box_hp_visible", true)                                                   \
+    X(bool, esp_box_hp_occluded, "esp_box_hp_occluded", true)                                                 \
     X(bool, esp_health_bar, "esp_health_bar", false)                                                          \
     X(bool, esp_health_bar_gradient, "esp_health_bar_gradient", true)                                         \
     X(Color, esp_health_bar_color, "esp_health_bar_color", Color(0.0f, 1.0f, 0.0f, 0.8f))                     \
@@ -211,6 +213,7 @@ void from_json(const nlohmann::json& j, ChamsStyle& style);
     X(float, esp_health_bar_thickness, "esp_health_bar_thickness", 2.0f)                                      \
     X(bool, debug_bridge, "debug_bridge", false)                                                              \
     X(bool, debug_gpu_profiling, "debug_gpu_profiling", false)                                                \
+    X(bool, debug_visibility, "debug_visibility", false)                                                      \
     X(bool, map_visualizer_enabled, "map_visualizer_enabled", false)                                          \
     X(bool, map_visualizer_depth_tested, "map_visualizer_depth_tested", true)                                 \
     X(Color, map_visualizer_color, "map_visualizer_color", Color(0.0f, 0.784f, 0.392f, 0.47f))                \
@@ -222,16 +225,17 @@ void from_json(const nlohmann::json& j, ChamsStyle& style);
     X(Color, inferno_outline_color, "inferno_outline_color", Color(0.824f, 0.314f, 0.0f, 0.7f))               \
     X(Color, inferno_fill_color, "inferno_fill_color", Color(1.0f, 0.588f, 0.0f, 0.235f))                     \
     X(bool, draw_grenade_trajectory, "draw_grenade_trajectory", true)                                         \
-    X(Color, grenade_trajectory_color, "grenade_trajectory_color", Color(0.67f, 0.69f, 0.86f, 0.8f))          \
-    X(Color, trajectory_bounce_color, "trajectory_bounce_color", Color(0.76f, 0.78f, 0.84f, 1.0f))            \
-    X(Color, trajectory_detonation_color, "trajectory_detonation_color", Color(0.55f, 0.59f, 0.92f, 1.0f))    \
     X(float, trajectory_thickness, "trajectory_thickness", 2.0f)                                              \
     X(float, trajectory_bounce_size, "trajectory_bounce_size", 2.0f)                                          \
     X(float, trajectory_detonation_radius, "trajectory_detonation_radius", 15.0f)                             \
     X(float, trajectory_fade_time, "trajectory_fade_time", 1.5f)                                              \
     X(bool, trajectory_show_through_walls, "trajectory_show_through_walls", false)                            \
+    X(bool, grenade_helper_enabled, "grenade_helper_enabled", true)                                           \
+    X(float, grenade_helper_render_distance, "grenade_helper_render_distance", 800.0f)                         \
+    X(float, grenade_helper_aim_radius, "grenade_helper_aim_radius", 4.1f)                                     \
     X(int, menu_w, "menu_w", 820)                                                                             \
-    X(int, menu_h, "menu_h", 620)
+    X(int, menu_h, "menu_h", 620)                                                                             \
+    X(float, menu_scale, "menu_scale", 1.0f)
 
 struct OverlayConfig {
 #define X(type, name, json_key, default_val) mutable type name = default_val;

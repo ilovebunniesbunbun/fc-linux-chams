@@ -71,7 +71,7 @@ namespace {
             case GRENADE_SMOKE: return cfg.grenade_color_smoke;
             case GRENADE_MOLOTOV: return cfg.grenade_color_molotov;
             case GRENADE_DECOY: return cfg.grenade_color_decoy;
-            default: return cfg.grenade_trajectory_color;
+            default: return Color(0.67f, 0.69f, 0.86f, 0.8f);
         }
     }
 
@@ -185,15 +185,17 @@ void GrenadeRenderer::render(GrenadeTracker& tracker, EspRenderer& esp_renderer,
     if (is_held_visible) {
         const auto& traj = render_result.held_trajectory;
         if (!was_held_trajectory_visible || traj.type != last_held_grenade_type) {
-            FC2_LOG_INFO("[DEBUG-VISIBILITY] Held Grenade Trajectory went VISIBLE. "
-                         "Reason: Player started aiming/holding a throw. "
-                         "Type: {} ({}), Points: {}, Start Pos: ({:.2f}, {:.2f}, {:.2f}), End Pos: ({:.2f}, {:.2f}, {:.2f}), Affected enemies: {}",
-                         traj.type, get_grenade_name(traj.type), traj.points.size(),
-                         traj.points.empty() ? 0.0f : traj.points.front().x,
-                         traj.points.empty() ? 0.0f : traj.points.front().y,
-                         traj.points.empty() ? 0.0f : traj.points.front().z,
-                         traj.end_pos.x, traj.end_pos.y, traj.end_pos.z,
-                         traj.affected_count);
+            if (cfg.debug_visibility) {
+                FC2_LOG_INFO("[DEBUG-VISIBILITY] Held Grenade Trajectory went VISIBLE. "
+                             "Reason: Player started aiming/holding a throw. "
+                             "Type: {} ({}), Points: {}, Start Pos: ({:.2f}, {:.2f}, {:.2f}), End Pos: ({:.2f}, {:.2f}, {:.2f}), Affected enemies: {}",
+                             traj.type, get_grenade_name(traj.type), traj.points.size(),
+                             traj.points.empty() ? 0.0f : traj.points.front().x,
+                             traj.points.empty() ? 0.0f : traj.points.front().y,
+                             traj.points.empty() ? 0.0f : traj.points.front().z,
+                             traj.end_pos.x, traj.end_pos.y, traj.end_pos.z,
+                             traj.affected_count);
+            }
         }
         was_held_trajectory_visible = true;
         last_held_grenade_type = traj.type;

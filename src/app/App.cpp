@@ -1,4 +1,5 @@
 #include "App.hpp"
+#include "external/imgui/imgui.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -14,6 +15,13 @@
 #include "math/BoneMath.hpp"
 #include "math/ViewMatrix.hpp"
 #include "renderer/Passes.hpp"
+
+static float get_player_ndc_z(const Vec3& world, const float* matrix) {
+    float w = matrix[12] * world.x + matrix[13] * world.y + matrix[14] * world.z + matrix[15];
+    if (w < 0.001f) return 1.0f;
+    float z = matrix[8] * world.x + matrix[9] * world.y + matrix[10] * world.z + matrix[11];
+    return z / w;
+}
 
 App::App(const OverlayConfig& initial_cfg) : cfg(initial_cfg), last_debug_print(std::chrono::steady_clock::now())
 {
@@ -151,6 +159,7 @@ bool App::initialize_system()
     }
 
     svg_cache.initialize("assets");
+    grenade_helper_data.initialize("assets/fgrenade_helper");
 
     visibility_worker.start();
     return true;
@@ -177,7 +186,14 @@ void App::process_frame()
     // Ensure the overlay context is current for all uploads and rendering
     make_context_current(overlay->get_window());
 
+    // Route GLFW event polling to the menu context so clicks register immediately
+    if (menu && menu->get_imgui_context()) {
+        ImGui::SetCurrentContext(menu->get_imgui_context());
+    }
     overlay->poll_events();
+    if (overlay && overlay->get_imgui_context()) {
+        ImGui::SetCurrentContext(overlay->get_imgui_context());
+    }
 
     // Handle config updates dynamically
     if (cfg.is_dirty()) {
@@ -534,6 +550,26 @@ void App::render_frame(const FrameInput& input, FrameState& state)
     // 6. Draw grenade trajectories
     grenade_renderer.render(grenade_tracker, esp_renderer, state.vischeck_result, input.gl_vp, input.render_view_matrix, cfg, overlay.get(), svg_cache);
 
+    // 6.5 Draw grenade helper lineups
+    if (cfg.grenade_helper_enabled) {
+        std::string clean_map = current_map;
+        if (clean_map.find("maps/") == 0) clean_map = clean_map.substr(5);
+        if (clean_map.find(".vpk") != std::string::npos) clean_map = clean_map.substr(0, clean_map.find(".vpk"));
+
+        Vec3 local_origin = input.packet.local_eye;
+        local_origin.z -= 64.0f; // Approximate ground position
+
+        grenade_helper_renderer.render(grenade_helper_data.get_lineups(clean_map), 
+                                       local_origin, 
+                                       input.packet.local_eye,
+                                       input.packet.local_angles,
+                                       input.packet.held_weapon_id,
+                                       input.render_view_matrix,
+                                       cfg,
+                                       overlay.get(),
+                                       svg_cache);
+    }
+
     gpu_profiler.begin_section(GpuTimerSection::ESP_2D);
 
     // 7. Render 2D ESP Overlay (Skeleton, Box, Health Bar)
@@ -547,45 +583,78 @@ void App::render_frame(const FrameInput& input, FrameState& state)
         }
 
         if (cfg.esp_box || cfg.esp_health_bar) {
-            glDisable(GL_DEPTH_TEST);
-            esp_renderer.clear();
-            esp_renderer.set_ortho(0, window_width, window_height, 0);
+            bool has_prepass = cfg.use_depth_prepass && depth_prepass.has_geometry();
+            bool draw_visible = cfg.esp_box_hp_visible;
+            bool draw_occluded = cfg.esp_box_hp_occluded;
 
-            for (int i = 0; i < input.packet.player_count; ++i) {
-                const auto& rp = state.render_palettes[i];
-                if (!rp.model) {
-                    player_active_last[i] = false;
-                    continue;
-                }
-                const auto& player = input.packet.players[i];
+            if (draw_visible || draw_occluded) {
+                esp_renderer.clear();
+                esp_renderer.set_ortho(0, window_width, window_height, 0);
 
-                if (!player_active_last[i] || smoothed_health[i] < 0.0f) {
-                    smoothed_health[i] = static_cast<float>(player.health);
-                    player_active_last[i] = true;
+                auto queue_esp = [&](float z) {
+                    for (int i = 0; i < input.packet.player_count; ++i) {
+                        const auto& rp = state.render_palettes[i];
+                        if (!rp.model) {
+                            player_active_last[i] = false;
+                            continue;
+                        }
+                        const auto& player = input.packet.players[i];
+
+                        if (!player_active_last[i] || smoothed_health[i] < 0.0f) {
+                            smoothed_health[i] = static_cast<float>(player.health);
+                            player_active_last[i] = true;
+                        } else {
+                            smoothed_health[i] +=
+                                (player.health - smoothed_health[i]) * std::clamp(10.0f * input.dt, 0.0f, 1.0f);
+                            if (std::abs(player.health - smoothed_health[i]) > 50.0f) {
+                                smoothed_health[i] = static_cast<float>(player.health);
+                            }
+                        }
+
+                        float bx, by, bw, bh;
+                        if (get_player_bounds(rp.sanitized_bones, player.origin, input.packet.local_eye,
+                                              input.render_view_matrix, window_width, window_height, bx, by, bw, bh, cfg)) {
+                            float player_z = 0.0f;
+                            if (z != 0.0f) {
+                                player_z = get_player_ndc_z(player.origin, input.render_view_matrix);
+                            }
+
+                            if (cfg.esp_box) {
+                                esp_renderer.add_outlined_rect_2d(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness,
+                                                                  cfg.esp_box_outline, player_z);
+                            }
+                            if (cfg.esp_health_bar) {
+                                esp_renderer.add_health_bar_2d(bx, by, bw, bh, smoothed_health[i], cfg, player_z);
+                            }
+                        }
+                    }
+                };
+
+                if (has_prepass && !(draw_visible && draw_occluded)) {
+                    glEnable(GL_DEPTH_TEST);
+                    glDepthMask(GL_FALSE);
+
+                    if (draw_visible) {
+                        glDepthFunc(GL_LEQUAL);
+                        queue_esp(1.0f);
+                    } else if (draw_occluded) {
+                        glDepthFunc(GL_GREATER);
+                        queue_esp(1.0f);
+                    }
+
+                    esp_renderer.flush_triangles();
+                    esp_renderer.flush_lines();
+
+                    glDepthMask(GL_TRUE);
+                    glDepthFunc(GL_LEQUAL);
                 } else {
-                    smoothed_health[i] +=
-                        (player.health - smoothed_health[i]) * std::clamp(10.0f * input.dt, 0.0f, 1.0f);
-                    if (std::abs(player.health - smoothed_health[i]) > 50.0f) {
-                        smoothed_health[i] = static_cast<float>(player.health);
-                    }
-                }
-
-                float bx, by, bw, bh;
-                if (get_player_bounds(rp.sanitized_bones, player.origin, input.packet.local_eye,
-                                      input.render_view_matrix, window_width, window_height, bx, by, bw, bh, cfg)) {
-                    if (cfg.esp_box) {
-                        esp_renderer.add_outlined_rect_2d(bx, by, bw, bh, cfg.esp_box_color, cfg.esp_box_thickness,
-                                                          cfg.esp_box_outline);
-                    }
-                    if (cfg.esp_health_bar) {
-                        esp_renderer.add_health_bar_2d(bx, by, bw, bh, smoothed_health[i], cfg);
-                    }
+                    glDisable(GL_DEPTH_TEST);
+                    queue_esp(0.0f);
+                    esp_renderer.flush_triangles();
+                    esp_renderer.flush_lines();
+                    glEnable(GL_DEPTH_TEST);
                 }
             }
-
-            esp_renderer.flush_triangles();
-            esp_renderer.flush_lines();
-            glEnable(GL_DEPTH_TEST);
         }
     }
 

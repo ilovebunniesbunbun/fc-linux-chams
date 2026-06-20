@@ -150,6 +150,17 @@ void OverlayClient::begin_frame() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Ensure font texture uses GL_NEAREST filtering for crisp pixel font rendering
+    static GLuint last_overlay_tex_id = 0;
+    GLuint overlay_tex_id = (GLuint)(intptr_t)ImGui::GetIO().Fonts->TexID;
+    if (overlay_tex_id && overlay_tex_id != last_overlay_tex_id) {
+        glBindTexture(GL_TEXTURE_2D, overlay_tex_id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        last_overlay_tex_id = overlay_tex_id;
+    }
 }
 
 void OverlayClient::draw_fps(int fps) {

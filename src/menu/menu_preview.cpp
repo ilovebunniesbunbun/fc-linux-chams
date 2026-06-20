@@ -183,7 +183,7 @@ void MenuPreview::render(OverlayConfig& cfg, float rotation_deg)
     if (!model || !model->valid) {
         glBindFramebuffer(GL_FRAMEBUFFER, preview_fbo);
         glViewport(0, 0, preview_w, preview_h);
-        glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
+        glClearColor(0.15f, 0.17f, 0.14f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return;
@@ -192,7 +192,7 @@ void MenuPreview::render(OverlayConfig& cfg, float rotation_deg)
     glBindFramebuffer(GL_FRAMEBUFFER, preview_fbo);
     glViewport(0, 0, preview_w, preview_h);
 
-    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
+    glClearColor(0.15f, 0.17f, 0.14f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     float rad_angle = rotation_deg * 3.14159265f / 180.0f;
@@ -237,10 +237,8 @@ void MenuPreview::render(OverlayConfig& cfg, float rotation_deg)
         preview_bones.resize(model->mesh.bone_count);
         for (int j = 0; j < model->mesh.bone_count; ++j) {
             const auto& ibp = model->mesh.inv_bind_poses[j];
-            float px = -(ibp[0][0] * ibp[0][3] + ibp[1][0] * ibp[1][3] + ibp[2][0] * ibp[2][3]);
-            float py = -(ibp[0][1] * ibp[0][3] + ibp[1][1] * ibp[1][3] + ibp[2][1] * ibp[2][3]);
-            float pz = -(ibp[0][2] * ibp[0][3] + ibp[1][2] * ibp[1][3] + ibp[2][2] * ibp[2][3]);
-            preview_bones[j] = {px, py, pz};
+            glm::mat4 bp = glm::inverse(source2::detail::to_mat4(ibp));
+            preview_bones[j] = { bp[3][0], bp[3][1], bp[3][2] };
         }
         dummy_vis.assign(128, 1.0f);
     }

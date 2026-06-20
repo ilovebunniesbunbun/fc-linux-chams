@@ -14,6 +14,8 @@
 #include "VisibilityWorker.hpp"
 #include "GrenadeTracker.hpp"
 #include "GrenadeRenderer.hpp"
+#include "GrenadeHelperData.hpp"
+#include "GrenadeHelperRenderer.hpp"
 #include "SvgCache.hpp"
 #include "FrameScheduler.hpp"
 #include "FrameInput.hpp"
@@ -49,6 +51,8 @@ private:
     VisibilityWorker visibility_worker;
     GrenadeTracker grenade_tracker;
     GrenadeRenderer grenade_renderer;
+    GrenadeHelperData grenade_helper_data;
+    GrenadeHelperRenderer grenade_helper_renderer;
     SvgCache svg_cache;
     FrameScheduler scheduler;
     GpuProfiler gpu_profiler;

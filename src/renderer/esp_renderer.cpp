@@ -383,7 +383,7 @@ void EspRenderer::set_ortho(float left, float right, float bottom, float top)
     set_projection(ortho);
 }
 
-void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const float* color, float thickness)
+void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const float* color, float thickness, float z)
 {
     std::vector<EspVertex>* batch = nullptr;
     for (auto& p : line_batches) {
@@ -396,29 +396,29 @@ void EspRenderer::add_line_2d(float x1, float y1, float x2, float y2, const floa
         line_batches.emplace_back(thickness, std::vector<EspVertex>{});
         batch = &line_batches.back().second;
     }
-    batch->push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
-    batch->push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
+    batch->push_back({x1, y1, z, color[0], color[1], color[2], color[3]});
+    batch->push_back({x2, y2, z, color[0], color[1], color[2], color[3]});
 }
 
 void EspRenderer::add_quad_2d(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4,
-                              const float* color)
+                              const float* color, float z)
 {
-    triangle_vertices.push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
-    triangle_vertices.push_back({x2, y2, 0.0f, color[0], color[1], color[2], color[3]});
-    triangle_vertices.push_back({x3, y3, 0.0f, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x1, y1, z, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x2, y2, z, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x3, y3, z, color[0], color[1], color[2], color[3]});
 
-    triangle_vertices.push_back({x1, y1, 0.0f, color[0], color[1], color[2], color[3]});
-    triangle_vertices.push_back({x3, y3, 0.0f, color[0], color[1], color[2], color[3]});
-    triangle_vertices.push_back({x4, y4, 0.0f, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x1, y1, z, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x3, y3, z, color[0], color[1], color[2], color[3]});
+    triangle_vertices.push_back({x4, y4, z, color[0], color[1], color[2], color[3]});
 }
 
-void EspRenderer::add_rect_2d(float x, float y, float w, float h, const float* color)
+void EspRenderer::add_rect_2d(float x, float y, float w, float h, const float* color, float z)
 {
-    add_quad_2d(x, y, x + w, y, x + w, y + h, x, y + h, color);
+    add_quad_2d(x, y, x + w, y, x + w, y + h, x, y + h, color, z);
 }
 
 void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const float* color, float thickness,
-                                       bool draw_outline)
+                                       bool draw_outline, float z)
 {
     float ix = std::round(x);
     float iy = std::round(y);
@@ -435,61 +435,61 @@ void EspRenderer::add_outlined_rect_2d(float x, float y, float w, float h, const
         // Outer outline quads (thickness 1.0f)
         // Top outer:
         add_quad_2d(ix - half_t - 1.0f, iy - half_t - 1.0f, ix + iw + half_t + 1.0f, iy - half_t - 1.0f,
-                    ix + iw + half_t + 1.0f, iy - half_t, ix - half_t - 1.0f, iy - half_t, black);
+                    ix + iw + half_t + 1.0f, iy - half_t, ix - half_t - 1.0f, iy - half_t, black, z);
 
         // Bottom outer:
         add_quad_2d(ix - half_t - 1.0f, iy + ih + half_t, ix + iw + half_t + 1.0f, iy + ih + half_t,
                     ix + iw + half_t + 1.0f, iy + ih + half_t + 1.0f, ix - half_t - 1.0f, iy + ih + half_t + 1.0f,
-                    black);
+                    black, z);
 
         // Left outer:
         add_quad_2d(ix - half_t - 1.0f, iy - half_t, ix - half_t, iy - half_t, ix - half_t, iy + ih + half_t,
-                    ix - half_t - 1.0f, iy + ih + half_t, black);
+                    ix - half_t - 1.0f, iy + ih + half_t, black, z);
 
         // Right outer:
         add_quad_2d(ix + iw + half_t, iy - half_t, ix + iw + half_t + 1.0f, iy - half_t, ix + iw + half_t + 1.0f,
-                    iy + ih + half_t, ix + iw + half_t, iy + ih + half_t, black);
+                    iy + ih + half_t, ix + iw + half_t, iy + ih + half_t, black, z);
 
         // Inner outline quads (thickness 1.0f)
         if (iw > t + 2.0f && ih > t + 2.0f) {
             // Top inner:
             add_quad_2d(ix + half_t, iy + half_t, ix + iw - half_t, iy + half_t, ix + iw - half_t, iy + half_t + 1.0f,
-                        ix + half_t, iy + half_t + 1.0f, black);
+                        ix + half_t, iy + half_t + 1.0f, black, z);
 
             // Bottom inner:
             add_quad_2d(ix + half_t, iy + ih - half_t - 1.0f, ix + iw - half_t, iy + ih - half_t - 1.0f,
-                        ix + iw - half_t, iy + ih - half_t, ix + half_t, iy + ih - half_t, black);
+                        ix + iw - half_t, iy + ih - half_t, ix + half_t, iy + ih - half_t, black, z);
 
             // Left inner:
             add_quad_2d(ix + half_t, iy + half_t + 1.0f, ix + half_t + 1.0f, iy + half_t + 1.0f, ix + half_t + 1.0f,
-                        iy + ih - half_t - 1.0f, ix + half_t, iy + ih - half_t - 1.0f, black);
+                        iy + ih - half_t - 1.0f, ix + half_t, iy + ih - half_t - 1.0f, black, z);
 
             // Right inner:
             add_quad_2d(ix + iw - half_t - 1.0f, iy + half_t + 1.0f, ix + iw - half_t, iy + half_t + 1.0f,
                         ix + iw - half_t, iy + ih - half_t - 1.0f, ix + iw - half_t - 1.0f, iy + ih - half_t - 1.0f,
-                        black);
+                        black, z);
         }
     }
 
     // Main box quads (thickness t)
     // Top main:
     add_quad_2d(ix - half_t, iy - half_t, ix + iw + half_t, iy - half_t, ix + iw + half_t, iy + half_t, ix - half_t,
-                iy + half_t, color);
+                iy + half_t, color, z);
 
     // Bottom main:
     add_quad_2d(ix - half_t, iy + ih - half_t, ix + iw + half_t, iy + ih - half_t, ix + iw + half_t, iy + ih + half_t,
-                ix - half_t, iy + ih + half_t, color);
+                ix - half_t, iy + ih + half_t, color, z);
 
     // Left main:
     add_quad_2d(ix - half_t, iy + half_t, ix + half_t, iy + half_t, ix + half_t, iy + ih - half_t, ix - half_t,
-                iy + ih - half_t, color);
+                iy + ih - half_t, color, z);
 
     // Right main:
     add_quad_2d(ix + iw - half_t, iy + half_t, ix + iw + half_t, iy + half_t, ix + iw + half_t, iy + ih - half_t,
-                ix + iw - half_t, iy + ih - half_t, color);
+                ix + iw - half_t, iy + ih - half_t, color, z);
 }
 
-void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float health, const OverlayConfig& cfg)
+void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float health, const OverlayConfig& cfg, float z)
 {
     (void)w;
     if (health < 0.0f) health = 0.0f;
@@ -511,7 +511,7 @@ void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float he
 
     if (cfg.esp_health_bar_outline) {
         float black[4] = {0.0f, 0.0f, 0.0f, cfg.esp_health_bar_color[3]};
-        add_rect_2d(bar_x - 1.0f, bar_y - 1.0f, bar_w + 2.0f, bar_h + 2.0f, black);
+        add_rect_2d(bar_x - 1.0f, bar_y - 1.0f, bar_w + 2.0f, bar_h + 2.0f, black, z);
     }
 
     float r = cfg.esp_health_bar_color[0];
@@ -526,7 +526,7 @@ void EspRenderer::add_health_bar_2d(float x, float y, float w, float h, float he
     }
 
     float color[4] = {r, g, b, a};
-    add_rect_2d(bar_x, fill_y, bar_w, fill_h, color);
+    add_rect_2d(bar_x, fill_y, bar_w, fill_h, color, z);
 }
 
 void EspRenderer::add_line_3d(const Vec3& p1, const Vec3& p2, const float* color, float thickness)

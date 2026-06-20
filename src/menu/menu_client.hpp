@@ -13,6 +13,7 @@ public:
 
     GLFWwindow* get_window() const { return window; }
     void set_overlay_window(GLFWwindow* w) { overlay_window = w; }
+    struct ImGuiContext* get_imgui_context() const { return imgui_context; }
 
 private:
     void init_window();

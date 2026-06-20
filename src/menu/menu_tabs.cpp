@@ -169,8 +169,11 @@ void render_chams_tab(OverlayConfig& cfg) {
 }
 
 void render_esp_tab(OverlayConfig& cfg) {
-    ImGui::Spacing();
     ImGui::Checkbox("Enable ESP Overlay", &cfg.esp_enabled);
+    if (cfg.esp_enabled) {
+        ImGui::Checkbox("Render Visible Box & HP Bar##esp_box_hp_vis", &cfg.esp_box_hp_visible);
+        ImGui::Checkbox("Render Occluded Box & HP Bar##esp_box_hp_occ", &cfg.esp_box_hp_occluded);
+    }
     ImGui::Separator();
 
     if (cfg.esp_enabled) {
@@ -245,9 +248,6 @@ void render_trajectories_tab(OverlayConfig& cfg) {
 
     if (cfg.draw_grenade_trajectory) {
         ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Colors");
-        ImGui::ColorEdit4("Trail Color", cfg.grenade_trajectory_color, ImGuiColorEditFlags_AlphaBar);
-        ImGui::ColorEdit4("Bounce Box Color", cfg.trajectory_bounce_color, ImGuiColorEditFlags_AlphaBar);
-        ImGui::ColorEdit4("Detonation Circle Color", cfg.trajectory_detonation_color, ImGuiColorEditFlags_AlphaBar);
         ImGui::ColorEdit4("HE Grenade Color", cfg.grenade_color_he, ImGuiColorEditFlags_AlphaBar);
         ImGui::ColorEdit4("Flashbang Color", cfg.grenade_color_flash, ImGuiColorEditFlags_AlphaBar);
         ImGui::ColorEdit4("Smoke Grenade Color", cfg.grenade_color_smoke, ImGuiColorEditFlags_AlphaBar);
@@ -263,6 +263,19 @@ void render_trajectories_tab(OverlayConfig& cfg) {
         ImGui::SliderFloat("Bounce Box Size", &cfg.trajectory_bounce_size, 0.5f, 10.0f, "%.1f");
         ImGui::SliderFloat("Detonation Radius", &cfg.trajectory_detonation_radius, 5.0f, 50.0f, "%.1f");
         ImGui::SliderFloat("Fade Duration", &cfg.trajectory_fade_time, 0.1f, 5.0f, "%.1fs");
+    }
+}
+
+void render_grenade_helper_tab(OverlayConfig& cfg) {
+    ImGui::Spacing();
+    ImGui::Checkbox("Enable Grenade Helper", &cfg.grenade_helper_enabled);
+    ImGui::Separator();
+
+    if (cfg.grenade_helper_enabled) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "Distances & Radii");
+        ImGui::SliderFloat("Render Distance (Units)", &cfg.grenade_helper_render_distance, 100.0f, 4000.0f, "%.0f");
+        ImGui::SliderFloat("Aim Activation Radius (Units)", &cfg.grenade_helper_aim_radius, 1.0f, 50.0f, "%.1f");
     }
 }
 
@@ -343,10 +356,15 @@ void render_overlay_tab(OverlayConfig& cfg, GLFWwindow* overlay_window, GLFWwind
     ImGui::Checkbox("Debug Bridge Packets", &cfg.debug_bridge);
     ImGui::Checkbox("GPU Profiling", &cfg.debug_gpu_profiling);
     ImGui::SetItemTooltip("Toggles the logging of shared memory bridge packet stats in the terminal.");
+    ImGui::Checkbox("Debug Visibility Logs", &cfg.debug_visibility);
+    ImGui::SetItemTooltip("Toggles detailed console logging for grenade/trajectory state changes.");
 
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Geometry & Scaling");
     ImGui::Separator();
+
+    ImGui::SliderFloat("Menu Scale", &cfg.menu_scale, 0.5f, 2.0f, "%.2fx");
+    ImGui::SetItemTooltip("Scales the control panel UI elements and text size.");
 
     static const std::vector<std::pair<std::string, std::string>> scaling_options = {
         {"stretched", "Stretched (Full Screen)"},

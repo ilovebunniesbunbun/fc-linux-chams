@@ -24,9 +24,13 @@
     "chams_style_hidden": { "type": "string", "default": "flat" },
     "use_depth_prepass": { "type": "boolean", "default": true },
     "use_bvh_fallback": { "type": "boolean", "default": true },
+    "esp_box_hp_visible": { "type": "boolean", "default": true },
+    "esp_box_hp_occluded": { "type": "boolean", "default": true },
     "flat_chams_no_overlap": { "type": "boolean", "default": true },
     "glow_enabled": { "type": "boolean", "default": false },
     "outline_mode": { "type": "string", "enum": ["glow", "stencil"], "default": "glow" },
+    "debug_visibility": { "type": "boolean", "default": false },
+    "menu_scale": { "type": "number", "default": 1.0 },
     "menu_w": { "type": "integer", "default": 820 },
     "menu_h": { "type": "integer", "default": 620 }
   }

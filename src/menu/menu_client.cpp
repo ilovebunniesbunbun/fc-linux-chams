@@ -76,18 +76,8 @@ void MenuClient::init_imgui()
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Load smallest pixel-7 font (scaled slightly larger for menu)
-    ImFont* font = io.Fonts->AddFontFromFileTTF("assets/smallest_pixel-7.ttf", 10.0f);
-    if (!font) {
-        font = io.Fonts->AddFontFromFileTTF("../assets/smallest_pixel-7.ttf", 10.0f);
-    }
-    if (!font) {
-        font = io.Fonts->AddFontFromFileTTF("/home/milo/Desktop/fc2-chams-rewrite/fc2-chams/assets/smallest_pixel-7.ttf", 10.0f);
-    }
-    if (!font) {
-        FC2_LOG_ERROR("MENU_CLIENT: Failed to load smallest_pixel-7.ttf font, falling back to default.");
-        io.Fonts->AddFontDefault();
-    }
+    // Load default font (ProggyClean) for the settings panel
+    io.Fonts->AddFontDefault();
 
     apply_dark_theme();
 
@@ -104,6 +94,14 @@ void MenuClient::render()
 
     ImGui::SetCurrentContext(imgui_context);
 
+    // Dynamically apply menu scale
+    static float last_applied_scale = -1.0f;
+    if (cfg.menu_scale != last_applied_scale) {
+        apply_dark_theme(cfg.menu_scale);
+        ImGui::GetIO().FontGlobalScale = cfg.menu_scale;
+        last_applied_scale = cfg.menu_scale;
+    }
+
     int cur_w, cur_h;
     glfwGetWindowSize(window, &cur_w, &cur_h);
     if (cur_w != cfg.menu_w || cur_h != cfg.menu_h) {
@@ -116,6 +114,8 @@ void MenuClient::render()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Font uses default linear/bilinear filtering for clean rendering
 
     render_ui();
 
@@ -156,7 +156,7 @@ void MenuClient::render_ui()
     ImGui::Spacing();
 
     // Left column settings panel
-    ImGui::BeginChild("LeftSettingsPanel", ImVec2(450.0f, 0.0f), false);
+    ImGui::BeginChild("LeftSettingsPanel", ImVec2(450.0f * cfg.menu_scale, 0.0f), false);
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
         if (ImGui::BeginTabItem("Chams")) {
@@ -171,6 +171,11 @@ void MenuClient::render_ui()
 
         if (ImGui::BeginTabItem("Trajectories")) {
             render_trajectories_tab(cfg);
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("Grenade Helper")) {
+            render_grenade_helper_tab(cfg);
             ImGui::EndTabItem();
         }
 
@@ -226,10 +231,10 @@ void MenuClient::render_ui()
     ImGui::Spacing();
 
     if (preview.get_texture()) {
-        ImGui::Image((void*)(intptr_t)preview.get_texture(), ImVec2((float)preview.get_width(), (float)preview.get_height()), ImVec2(0.0f, 1.0f),
+        ImGui::Image((void*)(intptr_t)preview.get_texture(), ImVec2((float)preview.get_width() * cfg.menu_scale, (float)preview.get_height() * cfg.menu_scale), ImVec2(0.0f, 1.0f),
                      ImVec2(1.0f, 0.0f));
     } else {
-        ImGui::Dummy(ImVec2((float)preview.get_width(), (float)preview.get_height()));
+        ImGui::Dummy(ImVec2((float)preview.get_width() * cfg.menu_scale, (float)preview.get_height() * cfg.menu_scale));
     }
 
     ImGui::Spacing();
