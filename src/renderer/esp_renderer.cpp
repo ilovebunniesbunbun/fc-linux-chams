@@ -866,14 +866,16 @@ void EspRenderer::upload_trajectory(uint32_t handle, float spawn_time, const std
     gpu_trajectories.push_back(traj);
 }
 
-void EspRenderer::draw_gpu_trajectory(uint32_t handle, float erase_progress, float fade_alpha)
+void EspRenderer::draw_gpu_trajectory(uint32_t handle, float spawn_time, float erase_progress, float fade_alpha, float thickness)
 {
     for (const auto& traj : gpu_trajectories) {
-        if (traj.entity_handle == handle) {
+        if (traj.entity_handle == handle && traj.spawn_time == spawn_time) {
             glUseProgram(trajectory_program_id);
             glUniformMatrix4fv(loc_traj_proj, 1, GL_FALSE, current_proj);
             glUniform1f(loc_traj_erase, erase_progress);
             glUniform1f(loc_traj_fade, fade_alpha);
+
+            glLineWidth(thickness);
 
             glBindVertexArray(traj.vao);
             glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)traj.vertex_count);

@@ -24,9 +24,13 @@ MenuClient::~MenuClient()
 {
     glfwMakeContextCurrent(window);
     preview.cleanup();
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    if (imgui_context) {
+        ImGui::SetCurrentContext(imgui_context);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(imgui_context);
+        imgui_context = nullptr;
+    }
     if (window) {
         glfwDestroyWindow(window);
         window = nullptr;
@@ -66,10 +70,24 @@ void MenuClient::init_imgui()
     glfwSwapInterval(0);  // Disable V-Sync to prevent blocking the shared overlay main loop
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    imgui_context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(imgui_context);
     ImGuiIO& io = ImGui::GetIO();
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // Load smallest pixel-7 font (scaled slightly larger for menu)
+    ImFont* font = io.Fonts->AddFontFromFileTTF("assets/smallest_pixel-7.ttf", 10.0f);
+    if (!font) {
+        font = io.Fonts->AddFontFromFileTTF("../assets/smallest_pixel-7.ttf", 10.0f);
+    }
+    if (!font) {
+        font = io.Fonts->AddFontFromFileTTF("/home/milo/Desktop/fc2-chams-rewrite/fc2-chams/assets/smallest_pixel-7.ttf", 10.0f);
+    }
+    if (!font) {
+        FC2_LOG_ERROR("MENU_CLIENT: Failed to load smallest_pixel-7.ttf font, falling back to default.");
+        io.Fonts->AddFontDefault();
+    }
 
     apply_dark_theme();
 
@@ -83,6 +101,8 @@ void MenuClient::render()
     if (glfwGetCurrentContext() != window) {
         glfwMakeContextCurrent(window);
     }
+
+    ImGui::SetCurrentContext(imgui_context);
 
     int cur_w, cur_h;
     glfwGetWindowSize(window, &cur_w, &cur_h);

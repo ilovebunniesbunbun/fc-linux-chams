@@ -20,6 +20,10 @@ struct TrajectoryResult {
     glm::vec3 current_pos{0.0f, 0.0f, 0.0f};
     uint32_t entity_handle = 0;
     float spawn_time = 0.0f;
+    float timer_start_time = 0.0f;
+    float timer_duration = 0.0f;
+    int affected_count = 0;
+    uint8_t type = 0;
 };
 
 // Check if grenade should detonate based on weapon type, velocity, and current tick

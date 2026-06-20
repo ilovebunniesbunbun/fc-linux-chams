@@ -11,6 +11,8 @@
 struct VischeckResult {
     TrajectoryResult held_trajectory;
     std::vector<TrajectoryResult> inflight_trajectories;
+    int inferno_count = 0;
+    InfernoData infernos[4];
 };
 
 class VisibilityWorker {

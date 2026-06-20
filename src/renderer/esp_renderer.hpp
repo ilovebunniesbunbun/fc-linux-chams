@@ -63,7 +63,7 @@ public:
 
     // GPU Resident Trajectories
     void upload_trajectory(uint32_t handle, float spawn_time, const std::vector<Vec3>& points, const float* color);
-    void draw_gpu_trajectory(uint32_t handle, float erase_progress, float fade_alpha);
+    void draw_gpu_trajectory(uint32_t handle, float spawn_time, float erase_progress, float fade_alpha, float thickness);
     void prune_gpu_trajectories(const std::vector<uint32_t>& active_handles);
 
     // Instanced Shape Builders

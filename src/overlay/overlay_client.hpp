@@ -19,6 +19,7 @@ public:
     GLFWwindow* get_window() { return window; }
     int get_width() const { return width; }
     int get_height() const { return height; }
+    struct ImGuiContext* get_imgui_context() { return imgui_context; }
 
 private:
     int width;
@@ -26,21 +27,8 @@ private:
     bool hyprland_support = false;
     GLFWwindow* window = nullptr;
 
-    // Modern text rendering resources
-    unsigned int text_program_id = 0;
-    unsigned int text_vao = 0;
-    unsigned int text_vbo = 0;
-    unsigned int font_texture = 0;
-    int text_loc_proj = -1;
-    int text_loc_color = -1;
-
-    struct TextVertex {
-        float x, y;
-        float u, v;
-    };
-
-    void init_text_rendering();
-    void draw_string_batched(const std::string& str, float x, float y, float r, float g, float b, float scale);
+    // Modern text rendering resources via ImGui context
+    struct ImGuiContext* imgui_context = nullptr;
 
     void init_window(int x, int y, bool hyprland_support);
     void init_opengl();

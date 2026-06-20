@@ -53,6 +53,19 @@ class InFlightProjectile(ctypes.Structure):
         ("initial_velocity", Vec3),
         ("current_position", Vec3),
         ("spawn_time", ctypes.c_float),
+        ("timer_start_time", ctypes.c_float),
+        ("duration", ctypes.c_float),
+        ("active", ctypes.c_uint8)
+    ]
+
+class InfernoData(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("entity_handle", ctypes.c_uint32),
+        ("start_time", ctypes.c_float),
+        ("duration", ctypes.c_float),
+        ("fire_count", ctypes.c_int),
+        ("fire_positions", Vec3 * 64),
         ("active", ctypes.c_uint8)
     ]
 
@@ -68,9 +81,13 @@ class ShmPacket(ctypes.Structure):
         ("pin_pulled", ctypes.c_uint8),
         ("throw_strength", ctypes.c_float),
         ("local_velocity", Vec3),
+        ("local_angles", Vec3),
         
         ("projectile_count", ctypes.c_int),
         ("projectiles", InFlightProjectile * 8),
+
+        ("inferno_count", ctypes.c_int),
+        ("infernos", InfernoData * 4),
         
         ("player_count", ctypes.c_int),
         ("players", PlayerData * 64)

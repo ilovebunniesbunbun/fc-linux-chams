@@ -150,6 +150,8 @@ bool App::initialize_system()
         return false;
     }
 
+    svg_cache.initialize("assets");
+
     visibility_worker.start();
     return true;
 }
@@ -530,7 +532,7 @@ void App::render_frame(const FrameInput& input, FrameState& state)
     }
 
     // 6. Draw grenade trajectories
-    grenade_tracker.draw(esp_renderer, state.vischeck_result, input.gl_vp, cfg);
+    grenade_renderer.render(grenade_tracker, esp_renderer, state.vischeck_result, input.gl_vp, input.render_view_matrix, cfg, overlay.get(), svg_cache);
 
     gpu_profiler.begin_section(GpuTimerSection::ESP_2D);
 

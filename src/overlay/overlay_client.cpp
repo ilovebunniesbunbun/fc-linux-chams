@@ -7,236 +7,11 @@
 #include <cstdlib>
 #include <array>
 #include <chrono>
-
 #include <vector>
 
-// Font bitmap for rendering FPS counter
-static unsigned char font_8x8[256][8];
-static bool font_initialized = false;
-
-static void init_font() {
-    std::memset(font_8x8, 0, sizeof(font_8x8));
-    
-    auto set_char = [](char c, const std::array<unsigned char, 8>& data) {
-        for (int i = 0; i < 8; ++i) {
-            font_8x8[(unsigned char)c][i] = data[i];
-        }
-    };
-
-    set_char(' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-    set_char(':', {0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00});
-    set_char('.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00});
-    set_char('-', {0x00, 0x00, 0x00, 0x3e, 0x00, 0x00, 0x00, 0x00});
-    set_char('_', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00});
-    
-    set_char('0', {0x3c, 0x66, 0x6e, 0x76, 0x66, 0x66, 0x3c, 0x00});
-    set_char('1', {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x3c, 0x00});
-    set_char('2', {0x3c, 0x66, 0x06, 0x0c, 0x30, 0x60, 0x7e, 0x00});
-    set_char('3', {0x3c, 0x66, 0x06, 0x1c, 0x06, 0x66, 0x3c, 0x00});
-    set_char('4', {0x0c, 0x1c, 0x3c, 0x6c, 0x6c, 0x7e, 0x0c, 0x00});
-    set_char('5', {0x7e, 0x60, 0x7c, 0x06, 0x06, 0x66, 0x3c, 0x00});
-    set_char('6', {0x3c, 0x60, 0x7c, 0x66, 0x66, 0x66, 0x3c, 0x00});
-    set_char('7', {0x7e, 0x66, 0x0c, 0x18, 0x18, 0x18, 0x18, 0x00});
-    set_char('8', {0x3c, 0x66, 0x66, 0x3c, 0x66, 0x66, 0x3c, 0x00});
-    set_char('9', {0x3c, 0x66, 0x66, 0x3e, 0x06, 0x0c, 0x38, 0x00});
-
-    set_char('A', {0x18, 0x3c, 0x66, 0x7e, 0x66, 0x66, 0x66, 0x00});
-    set_char('B', {0x7c, 0x66, 0x66, 0x7c, 0x66, 0x66, 0x7c, 0x00});
-    set_char('C', {0x3c, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3c, 0x00});
-    set_char('D', {0x78, 0x6c, 0x66, 0x66, 0x66, 0x6c, 0x78, 0x00});
-    set_char('E', {0x7e, 0x60, 0x60, 0x78, 0x60, 0x60, 0x7e, 0x00});
-    set_char('F', {0x7e, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x00});
-    set_char('G', {0x3c, 0x66, 0x60, 0x6e, 0x66, 0x66, 0x3c, 0x00});
-    set_char('H', {0x66, 0x66, 0x66, 0x7e, 0x66, 0x66, 0x66, 0x00});
-    set_char('I', {0x3c, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3c, 0x00});
-    set_char('J', {0x1e, 0x0c, 0x0c, 0x0c, 0x0c, 0xcc, 0x78, 0x00});
-    set_char('K', {0x66, 0x6c, 0x78, 0x70, 0x78, 0x6c, 0x66, 0x00});
-    set_char('L', {0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7e, 0x00});
-    set_char('M', {0x63, 0x77, 0x7f, 0x6b, 0x63, 0x63, 0x63, 0x00});
-    set_char('N', {0x66, 0x76, 0x7e, 0x7e, 0x6e, 0x66, 0x66, 0x00});
-    set_char('O', {0x3c, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00});
-    set_char('P', {0x7c, 0x66, 0x66, 0x7c, 0x60, 0x60, 0x60, 0x00});
-    set_char('Q', {0x3c, 0x66, 0x66, 0x66, 0x6e, 0x3c, 0x0e, 0x00});
-    set_char('R', {0x7c, 0x66, 0x66, 0x7c, 0x78, 0x6c, 0x66, 0x00});
-    set_char('S', {0x3c, 0x66, 0x60, 0x3c, 0x06, 0x66, 0x3c, 0x00});
-    set_char('T', {0x7e, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00});
-    set_char('U', {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00});
-    set_char('V', {0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x18, 0x00});
-    set_char('W', {0x63, 0x63, 0x63, 0x6b, 0x7f, 0x77, 0x63, 0x00});
-    set_char('X', {0x66, 0x66, 0x3c, 0x18, 0x3c, 0x66, 0x66, 0x00});
-    set_char('Y', {0x66, 0x66, 0x66, 0x3c, 0x18, 0x18, 0x18, 0x00});
-    set_char('Z', {0x7e, 0x06, 0x0c, 0x18, 0x30, 0x60, 0x7e, 0x00});
-    
-    font_initialized = true;
-}
-
-void OverlayClient::init_text_rendering() {
-    if (!font_initialized) init_font();
-
-    std::vector<unsigned char> tex_data(128 * 128 * 4, 0);
-    for (int c = 0; c < 256; ++c) {
-        const unsigned char* bitmap = font_8x8[c];
-        int char_row = c / 16;
-        int char_col = c % 16;
-        for (int row = 0; row < 8; ++row) {
-            unsigned char row_val = bitmap[row];
-            for (int col = 0; col < 8; ++col) {
-                int px = char_col * 8 + col;
-                int py = char_row * 8 + row;
-                int idx = (py * 128 + px) * 4;
-                if (row_val & (0x80 >> col)) {
-                    tex_data[idx + 0] = 255;
-                    tex_data[idx + 1] = 255;
-                    tex_data[idx + 2] = 255;
-                    tex_data[idx + 3] = 255;
-                } else {
-                    tex_data[idx + 0] = 255;
-                    tex_data[idx + 1] = 255;
-                    tex_data[idx + 2] = 255;
-                    tex_data[idx + 3] = 0;
-                }
-            }
-        }
-    }
-
-    glGenTextures(1, &font_texture);
-    glBindTexture(GL_TEXTURE_2D, font_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, tex_data.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    // Compile text shaders
-    const char* text_vertex_src = R"glsl(
-        #version 330 core
-        layout(location = 0) in vec2 aPos;
-        layout(location = 1) in vec2 aTex;
-        out vec2 vTex;
-        uniform mat4 uProj;
-        void main() {
-            gl_Position = uProj * vec4(aPos, 0.0, 1.0);
-            vTex = aTex;
-        }
-    )glsl";
-
-    const char* text_fragment_src = R"glsl(
-        #version 330 core
-        in vec2 vTex;
-        out vec4 fragColor;
-        uniform sampler2D uTexture;
-        uniform vec4 uColor;
-        void main() {
-            vec4 texColor = texture(uTexture, vTex);
-            fragColor = texColor * uColor;
-        }
-    )glsl";
-
-    auto compile = [](unsigned int type, const char* src) -> unsigned int {
-        unsigned int s = glCreateShader(type);
-        glShaderSource(s, 1, &src, nullptr);
-        glCompileShader(s);
-        int success;
-        glGetShaderiv(s, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            char log[512];
-            glGetShaderInfoLog(s, 512, nullptr, log);
-            FC2_LOG_ERROR("TEXT SHADER COMPILATION ERROR: {}", log);
-        }
-        return s;
-    };
-
-    unsigned int vs = compile(GL_VERTEX_SHADER, text_vertex_src);
-    unsigned int fs = compile(GL_FRAGMENT_SHADER, text_fragment_src);
-    text_program_id = glCreateProgram();
-    glAttachShader(text_program_id, vs);
-    glAttachShader(text_program_id, fs);
-    glLinkProgram(text_program_id);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    text_loc_proj = glGetUniformLocation(text_program_id, "uProj");
-    text_loc_color = glGetUniformLocation(text_program_id, "uColor");
-
-    glGenVertexArrays(1, &text_vao);
-    glGenBuffers(1, &text_vbo);
-
-    glBindVertexArray(text_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, text_vbo);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(TextVertex), (void*)(2 * sizeof(float)));
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-}
-
-void OverlayClient::draw_string_batched(const std::string& str, float x, float y, float r, float g, float b, float scale) {
-    if (str.empty()) return;
-
-    if (text_program_id == 0) {
-        init_text_rendering();
-    }
-
-    std::vector<TextVertex> vertices;
-    vertices.reserve(str.size() * 6);
-
-    float cur_x = x;
-    for (char c : str) {
-        char uc = (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
-        int char_row = (unsigned char)uc / 16;
-        int char_col = (unsigned char)uc % 16;
-
-        float u0 = (char_col * 8) / 128.0f;
-        float v0 = (char_row * 8) / 128.0f;
-        float u1 = ((char_col + 1) * 8) / 128.0f;
-        float v1 = ((char_row + 1) * 8) / 128.0f;
-
-        float w = 8.0f * scale;
-        float h = 8.0f * scale;
-
-        // Triangle 1
-        vertices.push_back({cur_x,     y,     u0, v0});
-        vertices.push_back({cur_x + w, y,     u1, v0});
-        vertices.push_back({cur_x + w, y + h, u1, v1});
-
-        // Triangle 2
-        vertices.push_back({cur_x,     y,     u0, v0});
-        vertices.push_back({cur_x + w, y + h, u1, v1});
-        vertices.push_back({cur_x,     y + h, u0, v1});
-
-        cur_x += w + 2.0f;
-    }
-
-    glUseProgram(text_program_id);
-
-    float ortho[16] = {
-        2.0f / width, 0.0f, 0.0f, 0.0f,
-        0.0f, -2.0f / height, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        -1.0f, 1.0f, 0.0f, 1.0f
-    };
-    glUniformMatrix4fv(text_loc_proj, 1, GL_FALSE, ortho);
-    float col_arr[4] = {r, g, b, 1.0f};
-    glUniform4fv(text_loc_color, 1, col_arr);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, font_texture);
-    
-    glBindVertexArray(text_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, text_vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(TextVertex), vertices.data(), GL_STREAM_DRAW);
-
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
-
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glUseProgram(0);
-}
+#include "external/imgui/imgui.h"
+#include "external/imgui/imgui_impl_glfw.h"
+#include "external/imgui/imgui_impl_opengl3.h"
 
 OverlayClient::OverlayClient(int w, int h, int x, int y, bool hyprland_support) : width(w), height(h), hyprland_support(hyprland_support) {
     init_window(x, y, hyprland_support);
@@ -320,8 +95,6 @@ void OverlayClient::init_window(int x, int y, bool hyprland_support) {
 
 void OverlayClient::init_opengl() {
     glfwMakeContextCurrent(window);
-    
-    // OpenGL function loading handled by GLEW in main
     glfwSwapInterval(0); // Disable V-Sync for custom frame pacing
 
     glViewport(0, 0, width, height);
@@ -332,6 +105,27 @@ void OverlayClient::init_opengl() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // Initialize ImGui context for the overlay
+    IMGUI_CHECKVERSION();
+    imgui_context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(imgui_context);
+
+    ImGuiIO& io = ImGui::GetIO();
+    // Load smallest pixel-7 font
+    ImFont* font = io.Fonts->AddFontFromFileTTF("assets/smallest_pixel-7.ttf", 10.0f);
+    if (!font) {
+        font = io.Fonts->AddFontFromFileTTF("../assets/smallest_pixel-7.ttf", 10.0f);
+    }
+    if (!font) {
+        font = io.Fonts->AddFontFromFileTTF("/home/milo/Desktop/fc2-chams-rewrite/fc2-chams/assets/smallest_pixel-7.ttf", 10.0f);
+    }
+    if (!font) {
+        FC2_LOG_ERROR("OVERLAY_CLIENT: Failed to load smallest_pixel-7.ttf font, falling back to default.");
+        io.Fonts->AddFontDefault();
+    }
+
+    ImGui_ImplGlfw_InitForOpenGL(window, false);
+    ImGui_ImplOpenGL3_Init("#version 130");
 }
 
 void OverlayClient::begin_frame() {
@@ -350,46 +144,44 @@ void OverlayClient::begin_frame() {
 
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+    // Initialize ImGui frame
+    ImGui::SetCurrentContext(imgui_context);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
 }
 
 void OverlayClient::draw_fps(int fps) {
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
+    ImGui::SetCurrentContext(imgui_context);
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     std::string fps_text = "FPS: " + std::to_string(fps);
-    float text_width = fps_text.size() * 18.0f;
+    
+    // Width estimation: 7px per char for "smallest_pixel-7" at 10px size
+    float text_width = fps_text.size() * 6.0f;
     float x_pos = width - text_width - 20.0f;
     float y_pos = 20.0f;
 
     // Draw shadow
-    draw_string_batched(fps_text, x_pos + 1.0f, y_pos + 1.0f, 0.0f, 0.0f, 0.0f, 2.0f);
+    draw_list->AddText(ImVec2(x_pos + 1.0f, y_pos + 1.0f), IM_COL32(0, 0, 0, 255), fps_text.c_str());
     // Draw text (bright green)
-    draw_string_batched(fps_text, x_pos, y_pos, 0.0f, 1.0f, 0.0f, 2.0f);
-
-    glEnable(GL_DEPTH_TEST);
+    draw_list->AddText(ImVec2(x_pos, y_pos), IM_COL32(0, 255, 0, 255), fps_text.c_str());
 }
 
 void OverlayClient::end_frame() {
+    ImGui::SetCurrentContext(imgui_context);
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window);
 }
 
 void OverlayClient::cleanup() {
-    if (font_texture) {
-        glDeleteTextures(1, &font_texture);
-        font_texture = 0;
-    }
-    if (text_vao) {
-        glDeleteVertexArrays(1, &text_vao);
-        text_vao = 0;
-    }
-    if (text_vbo) {
-        glDeleteBuffers(1, &text_vbo);
-        text_vbo = 0;
-    }
-    if (text_program_id) {
-        glDeleteProgram(text_program_id);
-        text_program_id = 0;
+    if (imgui_context) {
+        ImGui::SetCurrentContext(imgui_context);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(imgui_context);
+        imgui_context = nullptr;
     }
     if (window) {
         glfwDestroyWindow(window);

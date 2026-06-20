@@ -139,6 +139,14 @@ target_link_options(fc2_chams PRIVATE
     $<$<CONFIG:Release>:-O3 -march=native -flto>
 )
 
+# Copy assets to build directory
+add_custom_command(TARGET fc2_chams POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:fc2_chams>/assets
+    COMMENT "Copying assets to build directory"
+)
+
 option(FC2_BUILD_TESTS "Build C++ unit tests" OFF)
 if(FC2_BUILD_TESTS)
     enable_testing()

@@ -24,6 +24,7 @@ private:
 
     GLFWwindow* window = nullptr;
     GLFWwindow* overlay_window = nullptr;
+    struct ImGuiContext* imgui_context = nullptr;
     OverlayConfig& cfg;
     int width = 820;
     int height = 620;

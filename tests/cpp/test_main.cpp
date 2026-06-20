@@ -51,9 +51,9 @@ void test_shm_bounds()
     assert(shm::MAX_PLAYERS == 64);
     assert(shm::MAX_BONES == 128);
     assert(shm::MAX_PROJECTILES == 8);
-    assert(sizeof(ShmPacket) == 236058);
+    assert(sizeof(ShmPacket) == 239278);
     assert(sizeof(PlayerData) == 3680);
-    assert(sizeof(InFlightProjectile) == 46);
+    assert(sizeof(InFlightProjectile) == 54);
     std::cout << "test_shm_bounds passed!\n";
 }
 

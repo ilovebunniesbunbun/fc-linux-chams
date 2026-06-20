@@ -1,6 +1,9 @@
 #include "VisibilityWorker.hpp"
 #include "overlay/bvh_parser.hpp"
 #include <algorithm>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/norm.hpp>
 
 VisibilityWorker::VisibilityWorker() {}
 
@@ -95,18 +98,96 @@ void VisibilityWorker::run() {
         
         VischeckResult result;
         
-        // 1. Local player held grenade trajectory simulation (Commented out - currently broken/lacks necessary bridge inputs)
-        /*
+        // Helper to check for enemy impact scans using map BVH occlusion
+        auto count_affected_enemies = [&](const glm::vec3& detonation_pos, uint8_t weapon_type) -> int {
+            float radius_sqr = 0.0f;
+            bool is_flash = false;
+            
+            if (weapon_type == GRENADE_HE) radius_sqr = 350.0f * 350.0f;
+            else if (weapon_type == GRENADE_MOLOTOV) radius_sqr = 150.0f * 150.0f;
+            else if (weapon_type == GRENADE_FLASH) {
+                radius_sqr = 1000.0f * 1000.0f;
+                is_flash = true;
+            } else {
+                return 0;
+            }
+            
+            int affected_count = 0;
+            for (int i = 0; i < local_packet.player_count; ++i) {
+                const auto& player = local_packet.players[i];
+                if (!player.active || player.health <= 0) continue;
+                
+                // Read local player's team to ensure we only count enemies
+                // (Lua code checks local team. Our packet contains the enemy players list already,
+                // but let's double check distance and LoS)
+                glm::vec3 head_pos = player.bones[7].position; // bone 7 is head/eye
+                glm::vec3 delta = head_pos - detonation_pos;
+                float dist_sq = glm::dot(delta, delta);
+                if (dist_sq <= radius_sqr) {
+                    // Trace occlusion ray from detonation center to player head
+                    TraceResult tr = local_bvh.trace_ray(detonation_pos, head_pos);
+                    if (!tr.hit || glm::distance2(tr.end_pos, head_pos) < 100.0f) {
+                        if (is_flash) {
+                            // Derive player's view vector from head bone rotation quaternion
+                            // (Rotation rotation is a quaternion vec4_t: x,y,z,w)
+                            glm::quat q(player.bones[7].rotation.w, player.bones[7].rotation.x, player.bones[7].rotation.y, player.bones[7].rotation.z);
+                            glm::vec3 forward = q * glm::vec3(0.0f, 0.0f, -1.0f); // Default forward vector
+                            glm::vec3 to_nade = glm::normalize(detonation_pos - head_pos);
+                            if (glm::dot(forward, to_nade) > -0.5f) { // ~120 degrees FOV check
+                                affected_count++;
+                            }
+                        } else {
+                            affected_count++;
+                        }
+                    }
+                }
+            }
+            return affected_count;
+        };
+
+        // 1. Local player held grenade trajectory simulation
         if (local_packet.held_grenade_type != GRENADE_NONE && local_packet.pin_pulled) {
-            glm::vec3 forward = extract_forward_vector(local_packet.view_matrix);
+            float pitch = local_packet.local_angles.x;
+            float yaw = local_packet.local_angles.y;
+
+            // Normalize pitch to [-90, 90]
+            if (pitch > 90.0f) pitch -= 360.0f;
+            else if (pitch < -90.0f) pitch += 360.0f;
+
+            // Apply CS2 pitch throw offset correction
+            pitch = pitch - (90.0f - std::abs(pitch)) * 10.0f / 90.0f;
+
+            float p_rad = pitch * 3.14159265f / 180.0f;
+            float y_rad = yaw * 3.14159265f / 180.0f;
+            
+            glm::vec3 forward(
+                std::cos(p_rad) * std::cos(y_rad),
+                std::cos(p_rad) * std::sin(y_rad),
+                -std::sin(p_rad)
+            );
+
+            float strength = local_packet.throw_strength;
+            if (std::abs(strength - 0.5f) <= 0.1f) {
+                strength = 0.5f;
+            }
+
             float clamped = std::max(15.0f, std::min(750.0f, 750.0f * 0.9f));
-            float speed = (local_packet.throw_strength * 0.7f + 0.3f) * clamped;
+            float speed = (strength * 0.7f + 0.3f) * clamped;
             
             glm::vec3 origin = {
                 local_packet.local_eye.x + forward.x * 16.0f,
                 local_packet.local_eye.y + forward.y * 16.0f,
-                local_packet.local_eye.z + forward.z * 16.0f + local_packet.throw_strength * 12.0f - 12.0f
+                local_packet.local_eye.z + forward.z * 16.0f + strength * 12.0f - 12.0f
             };
+
+            // Raytrace checks to prevent throw origin clipping into walls
+            glm::vec3 trace_end = origin + forward * 22.0f;
+            TraceResult tr = local_bvh.trace_ray(origin, trace_end);
+            if (tr.hit) {
+                origin = tr.end_pos - forward * 6.0f;
+            } else {
+                origin = origin + forward * 16.0f;
+            }
             
             glm::vec3 velocity = {
                 forward.x * speed + local_packet.local_velocity.x * 1.25f,
@@ -115,15 +196,18 @@ void VisibilityWorker::run() {
             };
             
             result.held_trajectory = simulate_trajectory(origin, velocity, local_packet.held_grenade_type, local_bvh);
+            result.held_trajectory.type = local_packet.held_grenade_type;
+            if (result.held_trajectory.valid && result.held_trajectory.points.size() >= 2) {
+                result.held_trajectory.affected_count = count_affected_enemies(result.held_trajectory.end_pos, local_packet.held_grenade_type);
+            }
         }
-        */
         
         // 2. In-flight projectile trajectory simulation
         std::vector<TrajectoryResult> next_cache;
         int proj_count = std::min(local_packet.projectile_count, static_cast<int>(shm::MAX_PROJECTILES));
         for (int i = 0; i < proj_count; ++i) {
             const auto& proj = local_packet.projectiles[i];
-            if (!proj.active) continue;
+            if (!proj.active || proj.entity_handle < 0x1000) continue;
             
             bool found_cached = false;
             TrajectoryResult traj;
@@ -142,12 +226,27 @@ void VisibilityWorker::run() {
                 traj.spawn_time = proj.spawn_time;
             }
 
+            traj.type = proj.type;
             traj.current_pos = proj.current_position;
+            traj.timer_start_time = proj.timer_start_time;
+            traj.timer_duration = proj.duration;
+
+            // Re-calculate affected enemies at predicted detonation point
+            if (traj.valid && traj.points.size() >= 2) {
+                traj.affected_count = count_affected_enemies(traj.end_pos, proj.type);
+            }
+
             next_cache.push_back(traj);
             result.inflight_trajectories.push_back(traj);
         }
         cached_trajectories = std::move(next_cache);
         
+        // 3. Ground Inferno Zones copy
+        result.inferno_count = std::min(local_packet.inferno_count, 4);
+        for (int i = 0; i < result.inferno_count; ++i) {
+            result.infernos[i] = local_packet.infernos[i];
+        }
+
         {
             std::lock_guard<std::mutex> lock(mutex);
             latest_result = std::move(result);

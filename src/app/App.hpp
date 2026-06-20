@@ -13,6 +13,8 @@
 #include "overlay/shm_reader.hpp"
 #include "VisibilityWorker.hpp"
 #include "GrenadeTracker.hpp"
+#include "GrenadeRenderer.hpp"
+#include "SvgCache.hpp"
 #include "FrameScheduler.hpp"
 #include "FrameInput.hpp"
 #include "FrameState.hpp"
@@ -46,6 +48,8 @@ private:
 
     VisibilityWorker visibility_worker;
     GrenadeTracker grenade_tracker;
+    GrenadeRenderer grenade_renderer;
+    SvgCache svg_cache;
     FrameScheduler scheduler;
     GpuProfiler gpu_profiler;
 

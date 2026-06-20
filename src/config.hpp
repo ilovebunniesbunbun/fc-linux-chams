@@ -214,6 +214,13 @@ void from_json(const nlohmann::json& j, ChamsStyle& style);
     X(bool, map_visualizer_enabled, "map_visualizer_enabled", false)                                          \
     X(bool, map_visualizer_depth_tested, "map_visualizer_depth_tested", true)                                 \
     X(Color, map_visualizer_color, "map_visualizer_color", Color(0.0f, 0.784f, 0.392f, 0.47f))                \
+    X(Color, grenade_color_he, "grenade_color_he", Color(1.0f, 0.267f, 0.267f, 0.8f))                         \
+    X(Color, grenade_color_flash, "grenade_color_flash", Color(1.0f, 0.839f, 0.2f, 0.8f))                     \
+    X(Color, grenade_color_smoke, "grenade_color_smoke", Color(0.2f, 0.8f, 0.467f, 0.8f))                     \
+    X(Color, grenade_color_molotov, "grenade_color_molotov", Color(1.0f, 0.549f, 0.102f, 0.8f))               \
+    X(Color, grenade_color_decoy, "grenade_color_decoy", Color(0.4f, 0.6f, 0.8f, 0.8f))                       \
+    X(Color, inferno_outline_color, "inferno_outline_color", Color(0.824f, 0.314f, 0.0f, 0.7f))               \
+    X(Color, inferno_fill_color, "inferno_fill_color", Color(1.0f, 0.588f, 0.0f, 0.235f))                     \
     X(bool, draw_grenade_trajectory, "draw_grenade_trajectory", true)                                         \
     X(Color, grenade_trajectory_color, "grenade_trajectory_color", Color(0.67f, 0.69f, 0.86f, 0.8f))          \
     X(Color, trajectory_bounce_color, "trajectory_bounce_color", Color(0.76f, 0.78f, 0.84f, 1.0f))            \

@@ -53,7 +53,18 @@ struct InFlightProjectile {
     Vec3 initial_velocity;      // Velocity when thrown
     Vec3 current_position;      // Real-time world origin / detonation origin (via SceneNode)
     float spawn_time;           // Game time (curtime) when thrown
+    float timer_start_time;     // Effect start time (curtime)
+    float duration;             // Total duration (e.g. 18s, 15s)
     uint8_t active;             // 1 if active, 0 if empty slot
+};
+
+struct InfernoData {
+    uint32_t entity_handle;
+    float start_time;
+    float duration;
+    int fire_count;
+    Vec3 fire_positions[64];
+    uint8_t active;
 };
 
 struct PlayerData {
@@ -78,19 +89,25 @@ struct ShmPacket {
     uint8_t pin_pulled;         // 1 = True, 0 = False
     float throw_strength;       // 0.0 to 1.0
     Vec3 local_velocity;        // Local player velocity vector
+    Vec3 local_angles;          // Local player view angles (pitch/yaw/roll)
     
     // --- In-Flight Projectiles ---
     int projectile_count;
     InFlightProjectile projectiles[shm::MAX_PROJECTILES]; // Max 8 active projectiles tracked concurrently
     
+    // --- Ground Inferno Zones ---
+    int inferno_count;
+    InfernoData infernos[4];
+
     int player_count;
     PlayerData players[shm::MAX_PLAYERS];
 };
 #pragma pack(pop)
 
-static_assert(sizeof(InFlightProjectile) == 46, "InFlightProjectile packing mismatch");
+static_assert(sizeof(InFlightProjectile) == 54, "InFlightProjectile packing mismatch");
+static_assert(sizeof(InfernoData) == 785, "InfernoData packing mismatch");
 static_assert(sizeof(PlayerData) == 3680, "PlayerData packing mismatch");
-static_assert(sizeof(ShmPacket) == 236058, "ShmPacket packing mismatch");
+static_assert(sizeof(ShmPacket) == 239278, "ShmPacket packing mismatch");
 
 #include <semaphore.h>
 

@@ -248,6 +248,13 @@ void render_trajectories_tab(OverlayConfig& cfg) {
         ImGui::ColorEdit4("Trail Color", cfg.grenade_trajectory_color, ImGuiColorEditFlags_AlphaBar);
         ImGui::ColorEdit4("Bounce Box Color", cfg.trajectory_bounce_color, ImGuiColorEditFlags_AlphaBar);
         ImGui::ColorEdit4("Detonation Circle Color", cfg.trajectory_detonation_color, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("HE Grenade Color", cfg.grenade_color_he, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Flashbang Color", cfg.grenade_color_flash, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Smoke Grenade Color", cfg.grenade_color_smoke, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Molotov Color", cfg.grenade_color_molotov, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Decoy Color", cfg.grenade_color_decoy, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Inferno Outline Color", cfg.inferno_outline_color, ImGuiColorEditFlags_AlphaBar);
+        ImGui::ColorEdit4("Inferno Fill Color", cfg.inferno_fill_color, ImGuiColorEditFlags_AlphaBar);
 
         ImGui::Spacing();
         ImGui::Separator();

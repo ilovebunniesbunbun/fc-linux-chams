@@ -1,23 +1,118 @@
 #include "GrenadeTracker.hpp"
-#include <GL/glew.h>
+#include "logger.hpp"
+#include "overlay/overlay_client.hpp"
 #include <algorithm>
+
+namespace {
+    inline const char* get_grenade_name(uint8_t type) {
+        switch (type) {
+            case GRENADE_HE: return "HE";
+            case GRENADE_FLASH: return "FLASH";
+            case GRENADE_SMOKE: return "SMOKE";
+            case GRENADE_MOLOTOV: return "FIRE";
+            case GRENADE_DECOY: return "DECOY";
+            default: return "GRENADE";
+        }
+    }
+}
 
 GrenadeTracker::GrenadeTracker() {}
 
 void GrenadeTracker::update(const VischeckResult& render_result, double current_real_time, float dt, const OverlayConfig& cfg) {
-    // Mark previously tracked trajectories as inactive
+    // Mark previously tracked active components as inactive
     for (auto& tracked : tracked_active_trajectories) {
         tracked.still_active = false;
     }
+    for (auto& inf : tracked_infernos) {
+        inf.still_active = false;
+    }
+    for (auto& warn : tracked_warnings) {
+        warn.still_active = false;
+    }
 
-    // Match active trajectories and update tracked active list
+    // Match active trajectories and update lists
     for (const auto& active_traj : render_result.inflight_trajectories) {
         if (!active_traj.valid || active_traj.points.empty()) continue;
 
-        // Check if already detonated
+        // Filter out invalid entity handles (entry index 0xFFFF or 0x7FFF)
+        uint32_t ent_idx = active_traj.entity_handle & 0xFFFF;
+        if (active_traj.entity_handle == 0 || ent_idx == 0xFFFF || ent_idx == 0x7FFF) {
+            continue;
+        }
+
+        // A. Persistent Warning Badge tracking
+        bool warn_found = false;
+        for (auto& warn : tracked_warnings) {
+            if (warn.entity_handle == active_traj.entity_handle) {
+                warn.position = active_traj.current_pos;
+                if (warn.affected_count != active_traj.affected_count) {
+                    FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge Affected Count UPDATED. "
+                                 "Handle: {} (0x{:08X}), Type: {} ({}), Old Count: {}, New Count: {}",
+                                 warn.entity_handle, warn.entity_handle,
+                                 warn.type, get_grenade_name(warn.type),
+                                 warn.affected_count, active_traj.affected_count);
+                }
+                warn.affected_count = active_traj.affected_count;
+                warn.still_active = true;
+                warn.last_seen_time = current_real_time;
+                warn_found = true;
+
+                if (active_traj.timer_start_time > 0.0f && warn.timer_trigger_real_time == 0.0) {
+                    warn.timer_trigger_real_time = current_real_time;
+                    warn.timer_duration = active_traj.timer_duration;
+                    FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Timer STARTED/UPDATED. "
+                                 "Reason: Server/Lua timer trigger received. "
+                                 "Handle: {} (0x{:08X}), Type: {} ({}), Duration: {:.2f}s, Position: ({:.2f}, {:.2f}, {:.2f})",
+                                 warn.entity_handle, warn.entity_handle,
+                                 warn.type, get_grenade_name(warn.type),
+                                 warn.timer_duration,
+                                 warn.position.x, warn.position.y, warn.position.z);
+                }
+                break;
+            }
+        }
+        if (!warn_found) {
+            // Don't re-create warnings for handles whose timers have already expired
+            bool is_completed = false;
+            for (const auto& ch : completed_warning_handles) {
+                if (ch.handle == active_traj.entity_handle) {
+                    is_completed = true;
+                    break;
+                }
+            }
+            if (!is_completed) {
+                TrackedWarning new_warn;
+                new_warn.entity_handle = active_traj.entity_handle;
+                new_warn.type = active_traj.type;
+                new_warn.position = active_traj.current_pos;
+                new_warn.first_seen_time = current_real_time;
+                new_warn.last_seen_time = current_real_time;
+                new_warn.timer_trigger_real_time = 0.0;
+                if (active_traj.timer_start_time > 0.0f) {
+                    new_warn.timer_trigger_real_time = current_real_time;
+                }
+                new_warn.timer_duration = active_traj.timer_duration;
+                new_warn.affected_count = active_traj.affected_count;
+                new_warn.still_active = true;
+                tracked_warnings.push_back(new_warn);
+                FC2_LOG_INFO("[DEBUG-VISIBILITY] Grenade Warning Badge went VISIBLE. "
+                             "Reason: New projectile warning created. "
+                             "Handle: {} (0x{:08X}), Type: {} ({}), Position: ({:.2f}, {:.2f}, {:.2f}), "
+                             "Timer Duration: {:.2f}s, Timer Triggered: {}, Affected Enemies: {}",
+                             new_warn.entity_handle, new_warn.entity_handle,
+                             new_warn.type, get_grenade_name(new_warn.type),
+                             new_warn.position.x, new_warn.position.y, new_warn.position.z,
+                             new_warn.timer_duration,
+                             (new_warn.timer_trigger_real_time > 0.0) ? "YES" : "NO",
+                             new_warn.affected_count);
+            }
+        }
+
+        // B. Active Trajectory Path tracking
+        // Check if already detonated / completed flight
         bool is_detonated = false;
-        for (uint32_t h : detonated_handles) {
-            if (h == active_traj.entity_handle) {
+        for (const auto& dh : detonated_handles) {
+            if (dh.handle == active_traj.entity_handle) {
                 is_detonated = true;
                 break;
             }
@@ -31,11 +126,13 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
                 tracked.still_active = true;
                 found = true;
 
-                // Check if flight duration has exceeded
+                // Check if flight duration has exceeded (marking the end of trajectory rendering)
                 if (current_real_time - tracked.first_seen_time >= active_traj.duration) {
-                    // Mark as detonated
-                    detonated_handles.push_back(tracked.entity_handle);
-                    tracked.still_active = false; // This triggers moving it to fading list
+                    detonated_handles.push_back({tracked.entity_handle, current_real_time});
+                    tracked.still_active = false; // Triggers moving to fading list
+                }
+                if (active_traj.timer_start_time > 0.0f && tracked.timer_trigger_real_time == 0.0) {
+                    tracked.timer_trigger_real_time = current_real_time;
                 }
                 break;
             }
@@ -47,9 +144,75 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
             new_track.traj = active_traj;
             new_track.still_active = true;
             new_track.first_seen_time = current_real_time;
+            new_track.timer_trigger_real_time = 0.0;
+            if (active_traj.timer_start_time > 0.0f) {
+                new_track.timer_trigger_real_time = current_real_time;
+            }
             new_track.uploaded = false;
 
             tracked_active_trajectories.push_back(new_track);
+            FC2_LOG_INFO("[DEBUG-VISIBILITY] In-Flight Grenade Trajectory went VISIBLE. "
+                         "Reason: New projectile trajectory tracked. "
+                         "Handle: {} (0x{:08X}), Type: {} ({}), Spawn Time: {:.3f}, Duration: {:.2f}s, "
+                         "Start/Curr Pos: ({:.2f}, {:.2f}, {:.2f}), Points count: {}",
+                         new_track.entity_handle, new_track.entity_handle,
+                         active_traj.type, get_grenade_name(active_traj.type),
+                         active_traj.spawn_time, active_traj.duration,
+                         active_traj.current_pos.x, active_traj.current_pos.y, active_traj.current_pos.z,
+                         active_traj.points.size());
+        }
+    }
+
+    // Match active infernos and update tracked infernos list
+    for (int i = 0; i < render_result.inferno_count; ++i) {
+        const auto& inf_data = render_result.infernos[i];
+        if (!inf_data.active) continue;
+
+        // Filter out invalid entity handles (entry index 0xFFFF or 0x7FFF)
+        uint32_t ent_idx = inf_data.entity_handle & 0xFFFF;
+        if (inf_data.entity_handle == 0 || ent_idx == 0xFFFF || ent_idx == 0x7FFF) {
+            continue;
+        }
+
+        // If a ground fire inferno has spawned, kill any active or fading Molotov in-air warning badge near it
+        if (inf_data.fire_count > 0) {
+            Vec3 inf_center = inf_data.fire_positions[0];
+            for (auto& w : tracked_warnings) {
+                if (w.type == GRENADE_MOLOTOV) {
+                    float dx = w.position.x - inf_center.x;
+                    float dy = w.position.y - inf_center.y;
+                    float dz = w.position.z - inf_center.z;
+                    float dist_sqr = dx*dx + dy*dy + dz*dz;
+                    if (dist_sqr < 300.0f * 300.0f) { // within 300 units
+                        w.fade_alpha = 0.0f;
+                        w.still_active = false;
+                    }
+                }
+            }
+        }
+
+        bool found = false;
+        for (auto& inf : tracked_infernos) {
+            if (inf.entity_handle == inf_data.entity_handle) {
+                inf.still_active = true;
+                inf.last_seen_time = current_real_time;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            TrackedInferno new_inf;
+            new_inf.entity_handle = inf_data.entity_handle;
+            new_inf.first_seen_time = current_real_time;
+            new_inf.duration = inf_data.duration;
+            new_inf.still_active = true;
+            new_inf.last_seen_time = current_real_time;
+            tracked_infernos.push_back(new_inf);
+            FC2_LOG_INFO("[DEBUG-VISIBILITY] Ground Fire Inferno went VISIBLE. "
+                         "Reason: Ground fire (C_Inferno) spawned/detected. "
+                         "Handle: {} (0x{:08X}), Duration: {:.2f}s, Flames count: {}",
+                         new_inf.entity_handle, new_inf.entity_handle,
+                         new_inf.duration, inf_data.fire_count);
         }
     }
 
@@ -64,16 +227,22 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
         }
     }
 
-    // Clean up detonated handles that are no longer active in inflight_trajectories
+    // Clean up detonated handles after 30 seconds (must outlast smoke's 18s + decoy's 15s entity lifetime)
     detonated_handles.erase(
         std::remove_if(detonated_handles.begin(), detonated_handles.end(),
-                       [&render_result](uint32_t handle) {
-                           for (const auto& active : render_result.inflight_trajectories) {
-                               if (active.entity_handle == handle) return false; // Still active
-                           }
-                           return true; // No longer present, prune it!
+                       [current_real_time](const DetonatedHandle& dh) {
+                           return (current_real_time - dh.detonated_time) > 30.0;
                        }),
         detonated_handles.end()
+    );
+
+    // Clean up completed warning handles after 30 seconds
+    completed_warning_handles.erase(
+        std::remove_if(completed_warning_handles.begin(), completed_warning_handles.end(),
+                       [current_real_time](const CompletedWarningHandle& ch) {
+                           return (current_real_time - ch.completed_time) > 30.0;
+                       }),
+        completed_warning_handles.end()
     );
 
     // Remove inactive trajectories from tracked active list
@@ -82,6 +251,79 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
                        [](const TrackedTrajectory& t) { return !t.still_active; }),
         tracked_active_trajectories.end()
     );
+
+    // Remove inactive tracked infernos after a 1.0 second grace period
+    tracked_infernos.erase(
+        std::remove_if(tracked_infernos.begin(), tracked_infernos.end(),
+                       [current_real_time](const TrackedInferno& inf) { 
+                           return !inf.still_active && (current_real_time - inf.last_seen_time) > 1.0; 
+                       }),
+        tracked_infernos.end()
+    );
+
+    // Collect completed warning handles before pruning, then prune
+    {
+        std::vector<TrackedWarning> surviving_warnings;
+        surviving_warnings.reserve(tracked_warnings.size());
+
+        for (auto w : tracked_warnings) {
+            double age = current_real_time - w.first_seen_time;
+            bool should_remove = false;
+
+            // Update fade alpha and check if expired
+            if (w.type == GRENADE_HE || w.type == GRENADE_FLASH || w.type == GRENADE_MOLOTOV) {
+                float duration = (w.type == GRENADE_MOLOTOV) ? 2.02f : 1.5f;
+                if (age >= duration) {
+                    double overtime = age - duration;
+                    w.fade_alpha = std::max(0.0f, 1.0f - static_cast<float>(overtime / 1.0));
+                    if (w.fade_alpha <= 0.0f) {
+                        should_remove = true;
+                    }
+                }
+            } else if (w.type == GRENADE_SMOKE || w.type == GRENADE_DECOY) {
+                if (w.timer_trigger_real_time > 0.0) {
+                    double elapsed = current_real_time - w.timer_trigger_real_time;
+                    if (elapsed >= w.timer_duration) {
+                        double overtime = elapsed - w.timer_duration;
+                        w.fade_alpha = std::max(0.0f, 1.0f - static_cast<float>(overtime / 1.0));
+                        if (w.fade_alpha <= 0.0f) {
+                            should_remove = true;
+                        }
+                    }
+                }
+            }
+
+            // Also decay fade_alpha if entity stopped streaming early
+            if (!should_remove && !w.still_active) {
+                w.fade_alpha -= dt * 1.0f; // fade out over 1 second
+                if (w.fade_alpha <= 0.0f) {
+                    should_remove = true;
+                }
+            }
+
+            // Safety cap based on grenade type (only active if not already fading)
+            if (!should_remove && w.fade_alpha >= 1.0f) {
+                if (w.type == GRENADE_HE || w.type == GRENADE_FLASH || w.type == GRENADE_MOLOTOV) {
+                    should_remove = age > 5.0;
+                } else if (w.type == GRENADE_DECOY) {
+                    should_remove = age > 20.0;
+                } else if (w.type == GRENADE_SMOKE) {
+                    should_remove = age > 25.0;
+                } else {
+                    should_remove = age > 30.0;
+                }
+            }
+
+            if (should_remove) {
+                // Record as completed so it can't be re-created
+                completed_warning_handles.push_back({w.entity_handle, current_real_time});
+            } else {
+                surviving_warnings.push_back(w);
+            }
+        }
+
+        tracked_warnings = std::move(surviving_warnings);
+    }
 
     // Update fading/erasure state of fading trajectories
     float fade_speed = 1.0f / (cfg.trajectory_fade_time > 0.05f ? cfg.trajectory_fade_time : 1.5f);
@@ -98,112 +340,5 @@ void GrenadeTracker::update(const VischeckResult& render_result, double current_
     );
 }
 
-void GrenadeTracker::draw(EspRenderer& esp_renderer, const VischeckResult& render_result, const float* gl_vp, const OverlayConfig& cfg) {
-    if (!cfg.draw_grenade_trajectory) return;
 
-    esp_renderer.clear();
-    esp_renderer.set_projection(gl_vp);
 
-    if (cfg.trajectory_show_through_walls) {
-        glDisable(GL_DEPTH_TEST);
-    } else {
-        glEnable(GL_DEPTH_TEST);
-    }
-    glDepthMask(GL_FALSE);
-
-    // B) Draw Held Grenade Trajectory (Commented out - currently disabled)
-    /*
-    if (render_result.held_trajectory.valid && !render_result.held_trajectory.points.empty()) {
-        const auto& traj = render_result.held_trajectory;
-        for (size_t i = 0; i < traj.points.size() - 1; ++i) {
-            esp_renderer.add_line_3d(traj.points[i], traj.points[i + 1], cfg.grenade_trajectory_color, cfg.trajectory_thickness);
-        }
-        for (const auto& bounce : traj.bounces) {
-            esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, cfg.trajectory_bounce_color);
-        }
-        esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color);
-    }
-    */
-
-    // C) Draw In-Flight Grenade Trajectories
-    if (!tracked_active_trajectories.empty()) {
-        for (auto& tracked : tracked_active_trajectories) {
-            if (!tracked.still_active) continue;
-            const auto& traj = tracked.traj;
-            if (!traj.valid || traj.points.empty()) continue;
-
-            if (!tracked.uploaded) {
-                esp_renderer.upload_trajectory(tracked.entity_handle, tracked.spawn_time, traj.points, cfg.grenade_trajectory_color);
-                tracked.uploaded = true;
-            }
-
-            esp_renderer.draw_gpu_trajectory(tracked.entity_handle, 0.0f, 1.0f);
-
-            // Draw bounce boxes
-            for (const auto& bounce : traj.bounces) {
-                esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, cfg.trajectory_bounce_color);
-            }
-            esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, cfg.trajectory_detonation_color);
-        }
-    }
-
-    // D) Draw Fading/Erasing Grenade Trajectories
-    if (!fading_trajectories.empty()) {
-        for (const auto& fading : fading_trajectories) {
-            const auto& traj = fading.traj;
-            if (traj.points.empty()) continue;
-
-            // Calculate point where erasure has reached
-            float float_idx = static_cast<float>(traj.points.size() - 1) * fading.erase_progress;
-            size_t start_idx = static_cast<size_t>(float_idx);
-            if (start_idx >= traj.points.size() - 1) continue;
-
-            // Modulate colors by fade_alpha
-            float bounce_color_mod[4] = {
-                cfg.trajectory_bounce_color[0],
-                cfg.trajectory_bounce_color[1],
-                cfg.trajectory_bounce_color[2],
-                cfg.trajectory_bounce_color[3] * fading.fade_alpha
-            };
-            float detonation_color_mod[4] = {
-                cfg.trajectory_detonation_color[0],
-                cfg.trajectory_detonation_color[1],
-                cfg.trajectory_detonation_color[2],
-                cfg.trajectory_detonation_color[3] * fading.fade_alpha
-            };
-
-            esp_renderer.draw_gpu_trajectory(traj.entity_handle, fading.erase_progress, fading.fade_alpha);
-
-            // Draw remaining bounce boxes
-            for (size_t b_idx = 0; b_idx < traj.bounces.size(); ++b_idx) {
-                const auto& bounce = traj.bounces[b_idx];
-                size_t closest_pt_idx = (b_idx < traj.bounce_indices.size()) ? traj.bounce_indices[b_idx] : 0;
-                if (closest_pt_idx >= start_idx) {
-                    esp_renderer.add_box_instance(bounce, cfg.trajectory_bounce_size, bounce_color_mod);
-                }
-            }
-
-            // Draw detonation circle if it hasn't been erased yet
-            if (start_idx < traj.points.size() - 1) {
-                esp_renderer.add_circle_instance(traj.end_pos, cfg.trajectory_detonation_radius, detonation_color_mod);
-            }
-        }
-    }
-
-    esp_renderer.flush_lines();
-    esp_renderer.flush_instances();
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-
-    // Prune GPU trajectory buffers that are no longer active or fading
-    std::vector<uint32_t> active_handles;
-    for (const auto& tracked : tracked_active_trajectories) {
-        if (tracked.still_active) {
-            active_handles.push_back(tracked.entity_handle);
-        }
-    }
-    for (const auto& fading : fading_trajectories) {
-        active_handles.push_back(fading.traj.entity_handle);
-    }
-    esp_renderer.prune_gpu_trajectories(active_handles);
-}
