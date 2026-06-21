@@ -1,6 +1,7 @@
 # FC2 Chams V2
 
 its a vpk parser and bvh and also has chams and visuals it works on linux its awesome! 
+clone this jawn install dependencies ;D and build 
 
 ---
 
