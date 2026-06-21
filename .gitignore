@@ -46,4 +46,14 @@ __pycache__/
 imgui.ini
 *.log
 scratch/
+luas/
+dump.txt
+dump_vpk
+dump_vpk.cpp
+extract_aim_botz
+fix_plan.txt
+swap_passes.py
+world_physics.vmdl_c
+
+
 
