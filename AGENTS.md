@@ -6,7 +6,8 @@ High-performance GPU-skinned player chams overlay for CS2 on Linux, rendering vi
 
 - **Package Manager:** pacman (Arch Linux)
 - **Build:** `cmake -B build -S . && make -j$(nproc) -C build`
-- **Test (C++):** `cmake -B build -S . && make -j$(nproc) -C build && ./build/test_model_load`
+- **Test (C++ - Model Load):** `cmake -B build -S . && make -j$(nproc) -C build && ./build/test_model_load`
+- **Test (C++ - Unit Tests):** `cmake -B build -S . -DFC2_BUILD_TESTS=ON && make -j$(nproc) -C build && ctest --test-dir build --output-on-failure`
 - **Test (E2E):** `python -m pytest tests/ -v`
 - **Config File:** `overlay.json`
 - **SHM Bridge:** `/fc2_chams_shm_bridge` (POSIX shared memory)

@@ -25,19 +25,47 @@ C++20 project targeting GCC 10.0+ / Clang 11.0+ on Arch Linux.
 
 ```
 src/
-├── main.cpp              # Entry point, loop orchestration
+├── main.cpp              # Entry point
 ├── config.{hpp,cpp}      # Config loading/saving
-├── menu_client.{hpp,cpp} # ImGui settings window
-├── overlay_client.{hpp,cpp} # X11 overlay window management
-├── model_cache.{hpp,cpp} # VPK model loading/caching
-├── shm_reader.hpp        # Shared memory bridge reader
-├── esp_drawing.hpp       # ESP drawing primitives
-├── renderer/             # OpenGL rendering
-│   ├── gpu_chams.{hpp,cpp}
-│   ├── depth_prepass.{hpp,cpp}
-│   └── esp_renderer.{hpp,cpp}
-├── vpk/                  # VPK/KV3 parsing
-└── vischeck/             # BVH raytracing
+├── logger.hpp            # Simple logger
+├── model_cache.{hpp,cpp} # Async VPK model loading/caching
+├── app/                  # Application scheduling & features
+│   ├── App.{hpp,cpp}              # Central state & loop orchestration
+│   ├── FrameScheduler.{hpp,cpp}   # Frametime pacing & sleep
+│   ├── FrameInput.hpp             # Shared memory input structure
+│   ├── FrameState.hpp             # Active frame state
+│   ├── GrenadeTracker.{hpp,cpp}   # Track/predict grenade status
+│   ├── GrenadeRenderer.{hpp,cpp}  # Render grenade trajectories/badges
+│   ├── GrenadeHelperData.{hpp,cpp} # Load throw lineups from disk
+│   ├── GrenadeHelperRenderer.{hpp,cpp} # Render throws/helpers
+│   ├── SvgCache.{hpp,cpp}         # NanoSVG caching & rendering
+│   └── VisibilityWorker.{hpp,cpp} # Async raycasting queries
+├── menu/                 # Settings GUI (ImGui)
+│   ├── menu_client.{hpp,cpp}      # Client tabs & window
+│   ├── menu_preview.{hpp,cpp}     # 2D visual style preview
+│   ├── menu_tabs.{hpp,cpp}        # Individual menu tab layout
+│   └── menu_theme.hpp             # ImGui visual theme config
+├── overlay/              # X11 transparent overlay & SHM
+│   ├── overlay_client.{hpp,cpp}   # X11 transparent overlay setup
+│   ├── shm_reader.hpp             # POSIX SHM bridge reader
+│   ├── bvh_parser.hpp             # CPU BVH parser & raycast (was vischeck)
+│   ├── esp_drawing.hpp            # ESP primitives & font atlas
+│   └── trajectory_sim.hpp         # Grenade physics simulator
+├── renderer/             # OpenGL render passes & shaders
+│   ├── depth_prepass.{hpp,cpp}    # Occlusion depth pass
+│   ├── esp_renderer.{hpp,cpp}     # 2D/3D ESP boxes & skeletons
+│   ├── gpu_chams.{hpp,cpp}        # GPU skinned player chams shaders
+│   ├── Passes.{hpp,cpp}           # Base pass interface
+│   ├── gl_loader.hpp              # OpenGL loader setup
+│   └── gpu_profiler.{hpp,cpp}     # GPU timers & profiling UI
+└── vpk/                  # Valve Package File & KV3 parser
+    ├── kv3.hpp                    # KeyValues3 parser (binary/text, version 5)
+    ├── source2.hpp                # Source 2 formats & schemas
+    ├── vpk.hpp                    # Multi-path VPK reader
+    └── vmdl/                      # Valve Model parser
+        ├── model.{hpp,cpp}        # VMDL bone & mesh structure
+        ├── vmdl.{hpp,cpp}         # Binary VMDL container parser
+        └── maps/                  # Map geometry parsing
 ```
 
 ## OpenGL Conventions
