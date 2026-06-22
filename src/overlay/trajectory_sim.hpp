@@ -37,10 +37,10 @@ inline bool should_detonate(uint8_t weapon_type, const glm::vec3& vel, int tick)
         return speed_2d < threshold && (tick % check_ticks) == 0;
     }
     else if (weapon_type == GRENADE_MOLOTOV) {
-        return (tick * tick_interval) > 2.0f;
+        return (tick * tick_interval) >= 2.0f;
     }
     else if (weapon_type == GRENADE_FLASH || weapon_type == GRENADE_HE) {
-        return ((tick - 8) * tick_interval) > 1.5f;
+        return ((tick - 8) * tick_interval) >= 1.5f;
     }
     return false;
 }

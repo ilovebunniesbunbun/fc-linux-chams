@@ -5,6 +5,12 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <cstring>
 
 #include "bvh_parser.hpp"
 #include "config.hpp"
@@ -46,14 +52,106 @@ void test_extrapolator()
     std::cout << "test_extrapolator passed!\n";
 }
 
+void test_shm_read_write()
+{
+    // Set up unique shm and sem names for test
+    const char* shm_name = "/fc2_chams_shm_test_rw";
+    const char* sem_name = "/fc2_chams_sem_test_rw";
+    setenv("FC2_SHM_NAME", shm_name, 1);
+    setenv("FC2_SEM_NAME", sem_name, 1);
+
+    // Create shared memory
+    int fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
+    assert(fd >= 0);
+    int trunc_res = ftruncate(fd, sizeof(ShmPacket));
+    assert(trunc_res == 0);
+
+    void* addr = mmap(nullptr, sizeof(ShmPacket), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    assert(addr != MAP_FAILED);
+    ShmPacket* mapped_writer = static_cast<ShmPacket*>(addr);
+
+    // Create semaphore
+    sem_t* sem = sem_open(sem_name, O_CREAT, 0666, 0);
+    assert(sem != SEM_FAILED);
+
+    // Initialize reader
+    ShmReader reader;
+    bool init_ok = reader.initialize();
+    assert(init_ok);
+
+    // Populate mock packet
+    ShmPacket local_packet{};
+    local_packet.frame_index = 2; // Even number (not busy)
+    std::strcpy(local_packet.map_name, "de_mirage");
+    local_packet.player_count = 2;
+    local_packet.players[0].health = 80;
+    local_packet.players[0].active = 1;
+    std::strcpy(local_packet.players[0].model_name, "model_a");
+    local_packet.players[1].health = 100;
+    local_packet.players[1].active = 1;
+    std::strcpy(local_packet.players[1].model_name, "model_b");
+
+    local_packet.door_count = 2;
+    local_packet.doors[0].entity_handle = 10;
+    local_packet.doors[0].origin = glm::vec3(1.0f, 2.0f, 3.0f);
+    local_packet.doors[0].yaw = 45.0f;
+    local_packet.doors[0].active = 1;
+    local_packet.doors[1].entity_handle = 11;
+    local_packet.doors[1].origin = glm::vec3(4.0f, 5.0f, 6.0f);
+    local_packet.doors[1].yaw = 90.0f;
+    local_packet.doors[1].active = 1;
+
+    // Write to shared memory
+    std::memcpy(mapped_writer, &local_packet, sizeof(ShmPacket));
+
+    // Signal semaphore
+    sem_post(sem);
+
+    // Read back
+    ShmPacket read_packet{};
+    bool has_new = reader.fetch_latest(read_packet);
+    assert(has_new);
+    assert(read_packet.frame_index == 2);
+    assert(std::strcmp(read_packet.map_name, "de_mirage") == 0);
+    assert(read_packet.player_count == 2);
+    assert(read_packet.players[0].health == 80);
+    assert(std::strcmp(read_packet.players[0].model_name, "model_a") == 0);
+    assert(read_packet.players[1].health == 100);
+    assert(std::strcmp(read_packet.players[1].model_name, "model_b") == 0);
+
+    assert(read_packet.door_count == 2);
+    assert(read_packet.doors[0].entity_handle == 10);
+    assert(read_packet.doors[0].origin.x == 1.0f);
+    assert(read_packet.doors[0].yaw == 45.0f);
+    assert(read_packet.doors[1].entity_handle == 11);
+    assert(read_packet.doors[1].origin.x == 4.0f);
+    assert(read_packet.doors[1].yaw == 90.0f);
+
+    // Clean up
+    reader.shutdown();
+    munmap(addr, sizeof(ShmPacket));
+    close(fd);
+    shm_unlink(shm_name);
+    sem_close(sem);
+    sem_unlink(sem_name);
+
+    std::cout << "test_shm_read_write passed!\n";
+}
+
 void test_shm_bounds()
 {
     assert(shm::MAX_PLAYERS == 64);
     assert(shm::MAX_BONES == 128);
     assert(shm::MAX_PROJECTILES == 8);
-    assert(sizeof(ShmPacket) == 239278);
+    assert(shm::MAX_DOORS == 32);
+    assert(sizeof(ShmPacket) == 240852);
     assert(sizeof(PlayerData) == 3680);
     assert(sizeof(InFlightProjectile) == 54);
+    assert(sizeof(DoorData) == 49);
+    
+    // Call functional test
+    test_shm_read_write();
+    
     std::cout << "test_shm_bounds passed!\n";
 }
 

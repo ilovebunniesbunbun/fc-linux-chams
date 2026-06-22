@@ -19,6 +19,7 @@ namespace shm {
     constexpr std::size_t MAX_MODEL_NAME = 64;
     constexpr std::size_t MAX_MAP_NAME = 64;
     constexpr std::size_t VIEW_MATRIX_SIZE = 16;
+    constexpr std::size_t MAX_DOORS = 32;
 }
 
 using Vec3 = glm::vec3;
@@ -136,6 +137,16 @@ struct PlayerData {
     BoneTransform bones[shm::MAX_BONES];   // full skeletal transforms
 };
 
+struct DoorData {
+    uint32_t entity_handle;
+    Vec3 origin;
+    Vec3 angles;
+    Vec3 box_center;
+    int state;
+    float yaw;
+    uint8_t active;
+};
+
 struct ShmPacket {
     uint32_t frame_index;
     float view_matrix[shm::VIEW_MATRIX_SIZE];
@@ -160,13 +171,18 @@ struct ShmPacket {
 
     int player_count;
     PlayerData players[shm::MAX_PLAYERS];
+
+    // --- Added Door Arrays ---
+    int door_count;
+    DoorData doors[shm::MAX_DOORS];
 };
 #pragma pack(pop)
 
 static_assert(sizeof(InFlightProjectile) == 54, "InFlightProjectile packing mismatch");
 static_assert(sizeof(InfernoData) == 785, "InfernoData packing mismatch");
 static_assert(sizeof(PlayerData) == 3680, "PlayerData packing mismatch");
-static_assert(sizeof(ShmPacket) == 239280, "ShmPacket packing mismatch");
+static_assert(sizeof(DoorData) == 49, "DoorData packing mismatch");
+static_assert(sizeof(ShmPacket) == 240852, "ShmPacket packing mismatch");
 
 #include <semaphore.h>
 
@@ -259,6 +275,14 @@ public:
             if (copy_count > static_cast<int>(shm::MAX_PLAYERS)) copy_count = static_cast<int>(shm::MAX_PLAYERS);
             if (copy_count > 0) {
                 std::memcpy(out_packet.players, mapped_data->players, copy_count * sizeof(PlayerData));
+            }
+            
+            int door_count = mapped_data->door_count;
+            out_packet.door_count = door_count;
+            if (door_count < 0) door_count = 0;
+            if (door_count > static_cast<int>(shm::MAX_DOORS)) door_count = static_cast<int>(shm::MAX_DOORS);
+            if (door_count > 0) {
+                std::memcpy(out_packet.doors, mapped_data->doors, door_count * sizeof(DoorData));
             }
             
             uint32_t seq2 = mapped_data->frame_index;

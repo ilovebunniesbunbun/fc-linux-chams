@@ -69,6 +69,18 @@ class InfernoData(ctypes.Structure):
         ("active", ctypes.c_uint8)
     ]
 
+class DoorData(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("entity_handle", ctypes.c_uint32),
+        ("origin", Vec3),
+        ("angles", Vec3),
+        ("box_center", Vec3),
+        ("state", ctypes.c_int),
+        ("yaw", ctypes.c_float),
+        ("active", ctypes.c_uint8)
+    ]
+
 class ShmPacket(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
@@ -77,6 +89,7 @@ class ShmPacket(ctypes.Structure):
         ("local_eye", Vec3),
         ("map_name", ctypes.c_char * 64),
         
+        ("held_weapon_id", ctypes.c_uint16),
         ("held_grenade_type", ctypes.c_uint8),
         ("pin_pulled", ctypes.c_uint8),
         ("throw_strength", ctypes.c_float),
@@ -90,7 +103,10 @@ class ShmPacket(ctypes.Structure):
         ("infernos", InfernoData * 4),
         
         ("player_count", ctypes.c_int),
-        ("players", PlayerData * 64)
+        ("players", PlayerData * 64),
+
+        ("door_count", ctypes.c_int),
+        ("doors", DoorData * 32)
     ]
 
 class MockBridge:
