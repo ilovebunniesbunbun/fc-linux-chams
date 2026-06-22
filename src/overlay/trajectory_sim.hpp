@@ -69,7 +69,7 @@ inline glm::vec3 resolve_collision(const glm::vec3& normal, const glm::vec3& vel
     return new_vel;
 }
 
-inline void step_simulation(glm::vec3& pos, glm::vec3& vel, float gravity, const LocalMapBVH& bvh, bool& hit, glm::vec3& hit_normal) {
+inline void step_simulation(glm::vec3& pos, glm::vec3& vel, float gravity, const LocalMapBVH& bvh, const std::vector<LocalMapBVH::Triangle>& extra_triangles, bool& hit, glm::vec3& hit_normal) {
     constexpr float tick_interval = 1.0f / 64.0f;
     float new_vel_z = vel.z - gravity * tick_interval;
 
@@ -79,7 +79,7 @@ inline void step_simulation(glm::vec3& pos, glm::vec3& vel, float gravity, const
     glm::vec3 new_vel = glm::vec3(glm::vec2(vel), new_vel_z);
 
     hit = false;
-    TraceResult result = bvh.trace_ray(pos, end_pos);
+    TraceResult result = bvh.trace_ray(pos, end_pos, extra_triangles);
     if (result.hit) {
         hit = true;
         hit_normal = result.normal;
@@ -92,7 +92,7 @@ inline void step_simulation(glm::vec3& pos, glm::vec3& vel, float gravity, const
     vel = new_vel;
 }
 
-inline TrajectoryResult simulate_trajectory(const glm::vec3& origin, const glm::vec3& velocity, uint8_t weapon_type, const LocalMapBVH& bvh) {
+inline TrajectoryResult simulate_trajectory(const glm::vec3& origin, const glm::vec3& velocity, uint8_t weapon_type, const LocalMapBVH& bvh, const std::vector<LocalMapBVH::Triangle>& extra_triangles = {}) {
     constexpr float tick_interval = 1.0f / 64.0f;
     constexpr float GRAVITY_SCALE = 0.4f;
     constexpr float sv_gravity = 800.0f;
@@ -117,7 +117,7 @@ inline TrajectoryResult simulate_trajectory(const glm::vec3& origin, const glm::
 
         bool hit = false;
         Vec3 hit_normal{0,0,0};
-        step_simulation(pos, vel, gravity, bvh, hit, hit_normal);
+        step_simulation(pos, vel, gravity, bvh, extra_triangles, hit, hit_normal);
 
         if (hit) {
             bounce_count++;

@@ -38,6 +38,8 @@ void main() {
         finalColor = vec4(1.0, 0.0, 1.0, uColor.a); // Func Clip VPhysics (Magenta)
     } else if (vTypeID > 4.5 && vTypeID < 5.5) {
         finalColor = vec4(0.0, 1.0, 1.0, uColor.a); // Func Physbox (Cyan)
+    } else if (vTypeID > 6.5 && vTypeID < 7.5) {
+        finalColor = vec4(1.0, 1.0, 0.0, uColor.a); // Doors (Yellow)
     }
     FragColor = finalColor;
 }
@@ -81,6 +83,16 @@ void DepthPrepassRenderer::clear_geometry() {
         vao = 0;
     }
     vertex_count = 0;
+
+    if (dynamic_vbo) {
+        glDeleteBuffers(1, &dynamic_vbo);
+        dynamic_vbo = 0;
+    }
+    if (dynamic_vao) {
+        glDeleteVertexArrays(1, &dynamic_vao);
+        dynamic_vao = 0;
+    }
+    dynamic_vertex_count = 0;
 }
 
 bool DepthPrepassRenderer::compile_shader(unsigned int shader, const char* source) {
@@ -180,8 +192,48 @@ void DepthPrepassRenderer::upload_geometry(const std::vector<MapParser::Triangle
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
+void DepthPrepassRenderer::upload_dynamic_doors(const std::vector<LocalMapBVH::Triangle>& triangles) {
+    if (triangles.empty()) {
+        dynamic_vertex_count = 0;
+        return;
+    }
+
+    dynamic_vertex_count = triangles.size() * 3;
+
+    if (!dynamic_vao) {
+        glGenVertexArrays(1, &dynamic_vao);
+        glGenBuffers(1, &dynamic_vbo);
+    }
+
+    std::vector<MapParser::Triangle> map_triangles;
+    map_triangles.reserve(triangles.size());
+    for (const auto& tri : triangles) {
+        MapParser::Triangle mt;
+        mt.v0.pos = { tri.v0.x, tri.v0.y, tri.v0.z };
+        mt.v0.type_id = 7.0f; // 7.0f represents rotating door in our system
+        mt.v1.pos = { tri.v1.x, tri.v1.y, tri.v1.z };
+        mt.v1.type_id = 7.0f;
+        mt.v2.pos = { tri.v2.x, tri.v2.y, tri.v2.z };
+        mt.v2.type_id = 7.0f;
+        map_triangles.push_back(mt);
+    }
+
+    glBindVertexArray(dynamic_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, dynamic_vbo);
+    glBufferData(GL_ARRAY_BUFFER, map_triangles.size() * sizeof(MapParser::Triangle), map_triangles.data(), GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MapParser::Vertex), (void*)offsetof(MapParser::Vertex, pos));
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(MapParser::Vertex), (void*)offsetof(MapParser::Vertex, type_id));
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 void DepthPrepassRenderer::render(const float* view_proj) {
-    if (!has_geometry()) return;
+    if (!has_geometry() && dynamic_vertex_count == 0) return;
 
     glUseProgram(program_id);
     glUniformMatrix4fv(loc_view_proj, 1, GL_FALSE, view_proj);
@@ -193,8 +245,16 @@ void DepthPrepassRenderer::render(const float* view_proj) {
     glDepthFunc(GL_LESS);
 
     // Render map geometry
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertex_count);
+    if (has_geometry()) {
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertex_count);
+    }
+
+    // Render dynamic door geometry
+    if (dynamic_vertex_count > 0 && dynamic_vao) {
+        glBindVertexArray(dynamic_vao);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)dynamic_vertex_count);
+    }
     
     // Restore state
     glBindVertexArray(0);
@@ -203,7 +263,7 @@ void DepthPrepassRenderer::render(const float* view_proj) {
 }
 
 void DepthPrepassRenderer::render_wireframe(const float* view_proj, const float* color, bool depth_tested) {
-    if (!has_geometry()) return;
+    if (!has_geometry() && dynamic_vertex_count == 0) return;
 
     glUseProgram(wireframe_program_id);
     glUniformMatrix4fv(loc_wf_view_proj, 1, GL_FALSE, view_proj);
@@ -224,8 +284,15 @@ void DepthPrepassRenderer::render_wireframe(const float* view_proj, const float*
     }
     glDepthMask(GL_FALSE);
 
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertex_count);
+    if (has_geometry()) {
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertex_count);
+    }
+
+    if (dynamic_vertex_count > 0 && dynamic_vao) {
+        glBindVertexArray(dynamic_vao);
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)dynamic_vertex_count);
+    }
 
     // Restore state
     glBindVertexArray(0);

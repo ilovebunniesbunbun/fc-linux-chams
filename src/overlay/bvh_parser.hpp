@@ -65,10 +65,9 @@ public:
         }
     }
 
-    TraceResult trace_ray(const glm::vec3& start, const glm::vec3& end) const {
+    TraceResult trace_ray(const glm::vec3& start, const glm::vec3& end, const std::vector<Triangle>& extra_triangles = {}) const {
         TraceResult result;
         result.end_pos = end;
-        if (nodes.empty()) return result;
 
         glm::vec3 delta = end - start;
         float max_dist = glm::length(delta);
@@ -79,55 +78,94 @@ public:
         glm::vec3 inv_dir = 1.0f / dir;
 
         float closest_t = max_dist;
-        int stack[128];
-        int sp = 0;
-        stack[0] = 0;
 
-        while (sp >= 0) {
-            const auto& node = nodes[stack[sp--]];
-            if (!node.bounds.intersects_ray(origin, inv_dir, closest_t)) continue;
+        if (!nodes.empty()) {
+            int stack[128];
+            int sp = 0;
+            stack[0] = 0;
 
-            if (node.left == -1) {
-                // Perform leaf intersection tests using Möller-Trumbore
-                for (int i = node.tri_start; i < node.tri_start + node.tri_count; ++i) {
-                    const auto& tri = triangles[indices[i]];
-                    glm::vec3 e1 = tri.v1 - tri.v0;
-                    glm::vec3 e2 = tri.v2 - tri.v0;
-                    
-                    glm::vec3 h = glm::cross(dir, e2);
-                    float a = glm::dot(e1, h);
+            while (sp >= 0) {
+                const auto& node = nodes[stack[sp--]];
+                if (!node.bounds.intersects_ray(origin, inv_dir, closest_t)) continue;
 
-                    if (a > -1e-6f && a < 1e-6f) continue;
-                    float f = 1.0f / a;
-                    glm::vec3 s = origin - tri.v0;
-                    float u = f * glm::dot(s, h);
-                    if (u < 0.0f || u > 1.0f) continue;
-
-                    glm::vec3 q = glm::cross(s, e1);
-                    float v = f * glm::dot(dir, q);
-                    if (v < 0.0f || u + v > 1.0f) continue;
-
-                    float t = f * glm::dot(e2, q);
-                    if (t > 1e-4f && t < closest_t) {
-                        result.hit = true;
-                        result.distance = t;
-                        result.fraction = t / max_dist;
-                        result.end_pos = start + dir * t;
+                if (node.left == -1) {
+                    // Perform leaf intersection tests using Möller-Trumbore
+                    for (int i = node.tri_start; i < node.tri_start + node.tri_count; ++i) {
+                        const auto& tri = triangles[indices[i]];
+                        glm::vec3 e1 = tri.v1 - tri.v0;
+                        glm::vec3 e2 = tri.v2 - tri.v0;
                         
-                        // Calculate normal vector of the triangle
-                        glm::vec3 normal = glm::cross(e1, e2);
-                        float nlen = glm::length(normal);
-                        if (nlen > 0.0f) {
-                            result.normal = normal / nlen;
-                        } else {
-                            result.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+                        glm::vec3 h = glm::cross(dir, e2);
+                        float a = glm::dot(e1, h);
+
+                        if (a > -1e-6f && a < 1e-6f) continue;
+                        float f = 1.0f / a;
+                        glm::vec3 s = origin - tri.v0;
+                        float u = f * glm::dot(s, h);
+                        if (u < 0.0f || u > 1.0f) continue;
+
+                        glm::vec3 q = glm::cross(s, e1);
+                        float v = f * glm::dot(dir, q);
+                        if (v < 0.0f || u + v > 1.0f) continue;
+
+                        float t = f * glm::dot(e2, q);
+                        if (t > 1e-4f && t < closest_t) {
+                            result.hit = true;
+                            result.distance = t;
+                            result.fraction = t / max_dist;
+                            result.end_pos = start + dir * t;
+                            
+                            // Calculate normal vector of the triangle
+                            glm::vec3 normal = glm::cross(e1, e2);
+                            float nlen = glm::length(normal);
+                            if (nlen > 0.0f) {
+                                result.normal = normal / nlen;
+                            } else {
+                                result.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+                            }
+                            closest_t = t;
                         }
-                        return result;
                     }
+                } else {
+                    stack[++sp] = node.right;
+                    stack[++sp] = node.left;
                 }
-            } else {
-                stack[++sp] = node.right;
-                stack[++sp] = node.left;
+            }
+        }
+
+        // Trace against extra triangles (e.g. dynamic doors)
+        for (const auto& tri : extra_triangles) {
+            glm::vec3 e1 = tri.v1 - tri.v0;
+            glm::vec3 e2 = tri.v2 - tri.v0;
+            
+            glm::vec3 h = glm::cross(dir, e2);
+            float a = glm::dot(e1, h);
+
+            if (a > -1e-6f && a < 1e-6f) continue;
+            float f = 1.0f / a;
+            glm::vec3 s = origin - tri.v0;
+            float u = f * glm::dot(s, h);
+            if (u < 0.0f || u > 1.0f) continue;
+
+            glm::vec3 q = glm::cross(s, e1);
+            float v = f * glm::dot(dir, q);
+            if (v < 0.0f || u + v > 1.0f) continue;
+
+            float t = f * glm::dot(e2, q);
+            if (t > 1e-4f && t < closest_t) {
+                result.hit = true;
+                result.distance = t;
+                result.fraction = t / max_dist;
+                result.end_pos = start + dir * t;
+                
+                glm::vec3 normal = glm::cross(e1, e2);
+                float nlen = glm::length(normal);
+                if (nlen > 0.0f) {
+                    result.normal = normal / nlen;
+                } else {
+                    result.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+                }
+                closest_t = t;
             }
         }
         return result;

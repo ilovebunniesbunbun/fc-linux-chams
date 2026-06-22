@@ -13,6 +13,7 @@ struct VischeckResult {
     std::vector<TrajectoryResult> inflight_trajectories;
     int inferno_count = 0;
     InfernoData infernos[4];
+    std::vector<LocalMapBVH::Triangle> active_door_triangles;
 };
 
 class VisibilityWorker {
@@ -46,6 +47,7 @@ private:
     MapParser::MapMesh pending_map_mesh;
     bool map_needs_reload = false;
     OverlayConfig cfg_input;
+    std::vector<MapParser::MapDoor> local_doors;
 
     // Outputs
     VischeckResult latest_result;

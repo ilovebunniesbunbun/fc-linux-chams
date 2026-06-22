@@ -19,9 +19,17 @@ struct Triangle {
     Vertex v0, v1, v2;
 };
 
+struct MapDoor {
+    std::string ModelName;
+    Vec3 StaticOrigin;
+    Vec3 StaticAngles;
+    std::vector<Triangle> Triangles;
+};
+
 struct MapMesh {
     std::vector<Triangle> Triangles;
     std::vector<Triangle> VisualTriangles;
+    std::vector<MapDoor> Doors;
     bool Valid = false;
 };
 

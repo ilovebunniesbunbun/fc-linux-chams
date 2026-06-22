@@ -295,6 +295,7 @@ void App::prepare_frame_input(FrameInput& input)
         std::string shm_map = input.packet.map_name;
         if (current_map != shm_map) {
             current_map = shm_map;
+            last_vischeck_result = VischeckResult(); // Clear the cached vischeck and door results on map change
             if (!current_map.empty()) {
                 FC2_LOG_INFO("Map change detected: {}", current_map);
 
@@ -395,8 +396,14 @@ void App::preprocess_frame_state(const FrameInput& input, FrameState& state)
 {
     auto cpu_start = std::chrono::high_resolution_clock::now();
 
-    // Fetch latest results from worker thread
-    visibility_worker.get_latest_result(state.vischeck_result);
+    // Fetch latest results from worker thread (updating the cache only when new results are available)
+    visibility_worker.get_latest_result(last_vischeck_result);
+
+    // Copy the (possibly cached) result to the current frame's state
+    state.vischeck_result = last_vischeck_result;
+
+    // Upload dynamic door triangles to depth prepass
+    depth_prepass.upload_dynamic_doors(state.vischeck_result.active_door_triangles);
 
     // Persistent static scratch buffers to avoid per-player heap allocations
     static std::vector<source2::Mat3x4> world_bones_buf;

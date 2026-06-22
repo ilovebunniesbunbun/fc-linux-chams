@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include "../vpk/vmdl/maps/map_parser.hpp"
+#include "../overlay/bvh_parser.hpp"
 
 class DepthPrepassRenderer {
 public:
@@ -11,6 +12,7 @@ public:
     void cleanup();
 
     void upload_geometry(const std::vector<MapParser::Triangle>& triangles);
+    void upload_dynamic_doors(const std::vector<LocalMapBVH::Triangle>& triangles);
     void render(const float* view_proj);
     void render_wireframe(const float* view_proj, const float* color, bool depth_tested = true);
 
@@ -28,6 +30,10 @@ private:
     unsigned int vao = 0;
     unsigned int vbo = 0;
     size_t vertex_count = 0;
+
+    unsigned int dynamic_vao = 0;
+    unsigned int dynamic_vbo = 0;
+    size_t dynamic_vertex_count = 0;
 
     int loc_view_proj = -1;
     int loc_wf_view_proj = -1;

@@ -396,7 +396,8 @@ static Vec3 ParseVec3(const source2::kv3::KVValue* val, const Vec3& default_val 
 static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
                                  const std::string& mapName,
                                  std::vector<Triangle>& out,
-                                 std::vector<Triangle>& out_visual) {
+                                 std::vector<Triangle>& out_visual,
+                                 std::vector<MapDoor>& out_doors) {
     const std::string ents_path = "maps/" + mapName + "/entities/default_ents.vents_c";
     auto bytes_ents = map_vpk.read_file(ents_path);
     if (!bytes_ents || bytes_ents->empty()) return;
@@ -444,9 +445,12 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
         if (!classname_val || !classname_val->is_string()) continue;
         std::string classname = classname_val->as_string();
 
+        bool is_door = (classname == "prop_door_rotating" || classname == "func_door" || classname == "func_door_rotating" || classname.find("door") != std::string::npos);
+
         if (classname != "func_brush" && classname != "func_breakable" &&
             classname != "func_clip_vphysics" && classname != "func_physbox" &&
-            classname != "prop_physics" && classname != "prop_physics_multiplayer") {
+            classname != "prop_physics" && classname != "prop_physics_multiplayer" &&
+            !is_door) {
             continue;
         }
 
@@ -456,6 +460,7 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
         else if (classname == "func_brush") type_id = 3.0f;
         else if (classname == "func_clip_vphysics") type_id = 4.0f;
         else if (classname == "func_physbox") type_id = 5.0f;
+        else if (is_door) type_id = 7.0f;
         else type_id = 6.0f;
 
         const auto* model_val = values->get("model");
@@ -487,6 +492,30 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
         if (const auto* scale_val = values->get("scale")) {
             float s = static_cast<float>(scale_val->as_float());
             scales = {s, s, s};
+        }
+
+        if (is_door) {
+            MapDoor md;
+            md.ModelName = model_path;
+            md.StaticOrigin = origin;
+            md.StaticAngles = angles;
+
+            const auto& src_tris = !local_phys.empty() ? local_phys : local_visual;
+            for (const auto& tri : src_tris) {
+                Triangle scaled_tri = tri;
+                scaled_tri.v0.pos.x *= scales.x;
+                scaled_tri.v0.pos.y *= scales.y;
+                scaled_tri.v0.pos.z *= scales.z;
+                scaled_tri.v1.pos.x *= scales.x;
+                scaled_tri.v1.pos.y *= scales.y;
+                scaled_tri.v1.pos.z *= scales.z;
+                scaled_tri.v2.pos.x *= scales.x;
+                scaled_tri.v2.pos.y *= scales.y;
+                scaled_tri.v2.pos.z *= scales.z;
+                md.Triangles.push_back(scaled_tri);
+            }
+            out_doors.push_back(md);
+            continue;
         }
 
         const float pitch_rad = angles.x * (3.14159265f / 180.f);
@@ -646,7 +675,7 @@ MapMesh LoadMesh(const std::string& mapName) {
 
     if (BuildFromWorldPhysics(map_vpk, normalized, result.Triangles, result.VisualTriangles)) {
         result.Valid = true;
-        IntegrateEntityHulls(map_vpk, normalized, result.Triangles, result.VisualTriangles);
+        IntegrateEntityHulls(map_vpk, normalized, result.Triangles, result.VisualTriangles, result.Doors);
         s_LoadStatus = "ok (world_physics tris=" +
                         std::to_string(result.Triangles.size()) + ", visual=" +
                         std::to_string(result.VisualTriangles.size()) + ") from " + opened_path;

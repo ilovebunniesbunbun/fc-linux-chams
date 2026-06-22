@@ -74,6 +74,7 @@ private:
 
     FrameInput last_input{};
     bool has_valid_input = false;
+    VischeckResult last_vischeck_result;
 
     // Asynchronous map loading state
     std::future<MapParser::MapMesh> map_load_future;
