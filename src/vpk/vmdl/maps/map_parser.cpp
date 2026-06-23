@@ -11,6 +11,11 @@
 
 namespace MapParser {
 
+static vpk::VPKDir s_pak01_vpk;
+static bool s_pak01_vpk_initialized = false;
+static std::mutex s_pak01_mutex;
+static vpk::VPKDir s_CurrentMapVpk;
+
 struct hedge_t {
     std::uint8_t next;
     std::uint8_t twin;
@@ -415,10 +420,6 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
     const auto* entities_val = kv_opt->get("m_entityKeyValues");
     if (!entities_val || !entities_val->is_array()) return;
 
-    static vpk::VPKDir s_pak01_vpk;
-    static bool s_pak01_vpk_initialized = false;
-    static std::mutex s_pak01_mutex;
-
     if (!s_pak01_vpk_initialized) {
         std::lock_guard<std::mutex> lock(s_pak01_mutex);
         if (!s_pak01_vpk_initialized) {
@@ -499,6 +500,7 @@ static void IntegrateEntityHulls(vpk::VPKDir& map_vpk,
             md.ModelName = model_path;
             md.StaticOrigin = origin;
             md.StaticAngles = angles;
+            md.Scales = scales;
 
             const auto& src_tris = !local_phys.empty() ? local_phys : local_visual;
             for (const auto& tri : src_tris) {
@@ -662,20 +664,21 @@ MapMesh LoadMesh(const std::string& mapName) {
     const std::string normalized = NormalizeMapName(mapName);
     if (normalized.empty()) {
         s_LoadedMesh = {};
+        s_CurrentMapVpk.close();
         return result;
     }
 
-    vpk::VPKDir map_vpk;
+    s_CurrentMapVpk.close();
     std::string opened_path;
-    if (!OpenMapVpk(map_vpk, normalized, opened_path)) {
+    if (!OpenMapVpk(s_CurrentMapVpk, normalized, opened_path)) {
         s_LoadStatus = "vpk not found for: " + normalized;
         s_LoadedMesh = {};
         return result;
     }
 
-    if (BuildFromWorldPhysics(map_vpk, normalized, result.Triangles, result.VisualTriangles)) {
+    if (BuildFromWorldPhysics(s_CurrentMapVpk, normalized, result.Triangles, result.VisualTriangles)) {
         result.Valid = true;
-        IntegrateEntityHulls(map_vpk, normalized, result.Triangles, result.VisualTriangles, result.Doors);
+        IntegrateEntityHulls(s_CurrentMapVpk, normalized, result.Triangles, result.VisualTriangles, result.Doors);
         s_LoadStatus = "ok (world_physics tris=" +
                         std::to_string(result.Triangles.size()) + ", visual=" +
                         std::to_string(result.VisualTriangles.size()) + ") from " + opened_path;
@@ -695,6 +698,47 @@ const MapMesh* GetLoadedMesh() {
 
 void ClearLoadedMesh() {
     s_LoadedMesh = {};
+    s_CurrentMapVpk.close();
+}
+
+std::vector<Triangle> LoadModelTriangles(const std::string& model_path) {
+    std::string norm_path = model_path;
+    if (norm_path.size() >= 5 && norm_path.compare(norm_path.size() - 5, 5, ".vmdl") == 0) {
+        norm_path += "_c";
+    }
+    for (char& c : norm_path) {
+        if (c == '\\') c = '/';
+        else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+
+    std::optional<std::vector<uint8_t>> model_bytes;
+    if (s_CurrentMapVpk.is_open()) {
+        model_bytes = s_CurrentMapVpk.read_file(norm_path);
+    }
+    
+    if (!model_bytes) {
+        std::lock_guard<std::mutex> lock(s_pak01_mutex);
+        if (!s_pak01_vpk_initialized) {
+            for (const auto& path : vpk::cs2_default_vpk_paths()) {
+                if (s_pak01_vpk.open(path)) {
+                    s_pak01_vpk_initialized = true;
+                    break;
+                }
+            }
+        }
+        if (s_pak01_vpk_initialized) {
+            model_bytes = s_pak01_vpk.read_file(norm_path);
+        }
+    }
+
+    if (!model_bytes) return {};
+
+    std::vector<Triangle> local_phys;
+    std::vector<Triangle> local_visual;
+    if (AppendPhysBlockTriangles(*model_bytes, local_phys, local_visual, 7.0f)) {
+        return !local_phys.empty() ? local_phys : local_visual;
+    }
+    return {};
 }
 
 std::vector<Vec2> ProjectTopDown(const MapMesh& mesh,

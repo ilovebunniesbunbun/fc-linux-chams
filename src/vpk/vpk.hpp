@@ -212,6 +212,13 @@ public:
     }
 
     bool is_open() const { return opened_; }
+    void close() {
+        opened_ = false;
+        entries_.clear();
+        embedded_data_.clear();
+        dir_path_.clear();
+        archive_base_.clear();
+    }
 
     size_t file_count() const { return entries_.size(); }
 

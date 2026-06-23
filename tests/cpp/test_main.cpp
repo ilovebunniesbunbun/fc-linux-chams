@@ -94,10 +94,12 @@ void test_shm_read_write()
     local_packet.door_count = 2;
     local_packet.doors[0].entity_handle = 10;
     local_packet.doors[0].origin = glm::vec3(1.0f, 2.0f, 3.0f);
+    std::strcpy(local_packet.doors[0].model_name, "door_model_1");
     local_packet.doors[0].yaw = 45.0f;
     local_packet.doors[0].active = 1;
     local_packet.doors[1].entity_handle = 11;
     local_packet.doors[1].origin = glm::vec3(4.0f, 5.0f, 6.0f);
+    std::strcpy(local_packet.doors[1].model_name, "door_model_2");
     local_packet.doors[1].yaw = 90.0f;
     local_packet.doors[1].active = 1;
 
@@ -122,9 +124,11 @@ void test_shm_read_write()
     assert(read_packet.door_count == 2);
     assert(read_packet.doors[0].entity_handle == 10);
     assert(read_packet.doors[0].origin.x == 1.0f);
+    assert(std::strcmp(read_packet.doors[0].model_name, "door_model_1") == 0);
     assert(read_packet.doors[0].yaw == 45.0f);
     assert(read_packet.doors[1].entity_handle == 11);
     assert(read_packet.doors[1].origin.x == 4.0f);
+    assert(std::strcmp(read_packet.doors[1].model_name, "door_model_2") == 0);
     assert(read_packet.doors[1].yaw == 90.0f);
 
     // Clean up
@@ -144,10 +148,10 @@ void test_shm_bounds()
     assert(shm::MAX_BONES == 128);
     assert(shm::MAX_PROJECTILES == 8);
     assert(shm::MAX_DOORS == 32);
-    assert(sizeof(ShmPacket) == 240852);
+    assert(sizeof(ShmPacket) == 244820);
     assert(sizeof(PlayerData) == 3680);
     assert(sizeof(InFlightProjectile) == 54);
-    assert(sizeof(DoorData) == 49);
+    assert(sizeof(DoorData) == 173);
     
     // Call functional test
     test_shm_read_write();

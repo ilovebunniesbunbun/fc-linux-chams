@@ -110,10 +110,10 @@ void VisibilityWorker::run() {
             const auto& live_door = local_packet.doors[i];
             if (!live_door.active) continue;
 
-            // Find closest MapDoor in local_doors
-            const MapParser::MapDoor* best_match = nullptr;
+            // Find closest MapDoor in local_doors (mutable pointer)
+            MapParser::MapDoor* best_match = nullptr;
             float best_dist_sq = 2500.0f; // 50 units threshold squared
-            for (const auto& md : local_doors) {
+            for (auto& md : local_doors) {
                 glm::vec3 diff = { md.StaticOrigin.x - live_door.origin.x,
                                    md.StaticOrigin.y - live_door.origin.y,
                                    md.StaticOrigin.z - live_door.origin.z };
@@ -125,6 +125,37 @@ void VisibilityWorker::run() {
             }
 
             if (best_match) {
+                // Dynamically reload the model if the bridge reports a different model (e.g. damaged)
+                std::string norm_live_model = live_door.model_name;
+                for (char& c : norm_live_model) {
+                    if (c == '\\') c = '/';
+                    else if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                }
+                if (norm_live_model.size() >= 5 && norm_live_model.compare(norm_live_model.size() - 5, 5, ".vmdl") == 0) {
+                    norm_live_model += "_c";
+                }
+
+                if (!norm_live_model.empty() && best_match->ModelName != norm_live_model) {
+                    auto new_tris = MapParser::LoadModelTriangles(live_door.model_name);
+                    if (!new_tris.empty()) {
+                        best_match->Triangles.clear();
+                        best_match->ModelName = norm_live_model;
+                        for (const auto& tri : new_tris) {
+                            MapParser::Triangle scaled_tri = tri;
+                            scaled_tri.v0.pos.x *= best_match->Scales.x;
+                            scaled_tri.v0.pos.y *= best_match->Scales.y;
+                            scaled_tri.v0.pos.z *= best_match->Scales.z;
+                            scaled_tri.v1.pos.x *= best_match->Scales.x;
+                            scaled_tri.v1.pos.y *= best_match->Scales.y;
+                            scaled_tri.v1.pos.z *= best_match->Scales.z;
+                            scaled_tri.v2.pos.x *= best_match->Scales.x;
+                            scaled_tri.v2.pos.y *= best_match->Scales.y;
+                            scaled_tri.v2.pos.z *= best_match->Scales.z;
+                            best_match->Triangles.push_back(scaled_tri);
+                        }
+                    }
+                }
+
                 // Compute rotation matrix for the live door's angles (pitch, yaw, roll)
                 float pitch_rad = live_door.angles.x * (3.14159265f / 180.f);
                 float yaw_rad   = live_door.angles.y * (3.14159265f / 180.f);

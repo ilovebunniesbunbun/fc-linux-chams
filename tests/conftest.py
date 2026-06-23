@@ -76,7 +76,7 @@ class DoorData(ctypes.Structure):
         ("origin", Vec3),
         ("angles", Vec3),
         ("box_center", Vec3),
-        ("state", ctypes.c_int),
+        ("model_name", ctypes.c_char * 128),
         ("yaw", ctypes.c_float),
         ("active", ctypes.c_uint8)
     ]

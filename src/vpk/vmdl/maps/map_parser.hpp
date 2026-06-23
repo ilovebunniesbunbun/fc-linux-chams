@@ -23,6 +23,7 @@ struct MapDoor {
     std::string ModelName;
     Vec3 StaticOrigin;
     Vec3 StaticAngles;
+    Vec3 Scales;
     std::vector<Triangle> Triangles;
 };
 
@@ -55,5 +56,7 @@ bool AppendPhysBlockTriangles(const std::vector<uint8_t>& vmdl_blob,
                               std::vector<Triangle>& out,
                               std::vector<Triangle>& out_visual,
                               float type_id = 0.0f);
+
+std::vector<Triangle> LoadModelTriangles(const std::string& model_path);
 
 }

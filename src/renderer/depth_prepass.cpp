@@ -269,7 +269,8 @@ void DepthPrepassRenderer::render_wireframe(const float* view_proj, const float*
     glUniformMatrix4fv(loc_wf_view_proj, 1, GL_FALSE, view_proj);
     glUniform4fv(loc_wf_color, 1, color);
 
-    // Render as line wireframe
+    // Render as line wireframe with increased thickness
+    glLineWidth(1.5f);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
     // Enable blending for transparency support
@@ -297,6 +298,7 @@ void DepthPrepassRenderer::render_wireframe(const float* view_proj, const float*
     // Restore state
     glBindVertexArray(0);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glLineWidth(1.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LEQUAL);

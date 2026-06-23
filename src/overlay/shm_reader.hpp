@@ -142,7 +142,7 @@ struct DoorData {
     Vec3 origin;
     Vec3 angles;
     Vec3 box_center;
-    int state;
+    char model_name[128];
     float yaw;
     uint8_t active;
 };
@@ -181,8 +181,8 @@ struct ShmPacket {
 static_assert(sizeof(InFlightProjectile) == 54, "InFlightProjectile packing mismatch");
 static_assert(sizeof(InfernoData) == 785, "InfernoData packing mismatch");
 static_assert(sizeof(PlayerData) == 3680, "PlayerData packing mismatch");
-static_assert(sizeof(DoorData) == 49, "DoorData packing mismatch");
-static_assert(sizeof(ShmPacket) == 240852, "ShmPacket packing mismatch");
+static_assert(sizeof(DoorData) == 173, "DoorData packing mismatch");
+static_assert(sizeof(ShmPacket) == 244820, "ShmPacket packing mismatch");
 
 #include <semaphore.h>
 
